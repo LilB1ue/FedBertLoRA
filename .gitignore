@@ -1,3 +1,16 @@
+# PDF papers
+*.pdf
+
+# Model checkpoints
+checkpoints/
+results/
+*.pt
+*.bin
+*.safetensors
+
+# Wandb
+wandb/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
