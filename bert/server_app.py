@@ -4,15 +4,23 @@ import torch
 from evaluate import load as load_metric
 from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
+from torch.utils.data import DataLoader
 
 from bert.dataset import get_num_labels, load_centralized_data
-from bert.models import get_model, get_parameters, get_parameter_keys, set_parameters
+from bert.models import cosine_annealing, get_model, get_parameters, get_parameter_keys, set_parameters
 from bert.strategy import FedSALoRAStrategy
 
 
 def get_evaluate_fn(model_name, task_name, num_labels, lora_r, lora_alpha,
                     target_modules, max_seq_length, batch_size):
     """Return a server-side evaluation function."""
+    # Pre-load eval data once
+    _, eval_dataset, _, data_collator = load_centralized_data(
+        task_name=task_name,
+        model_name=model_name,
+        max_seq_length=max_seq_length,
+    )
+    testloader = DataLoader(eval_dataset, batch_size=batch_size, collate_fn=data_collator)
 
     def evaluate(server_round, parameters, config):
         if server_round == 0:
@@ -22,13 +30,6 @@ def get_evaluate_fn(model_name, task_name, num_labels, lora_r, lora_alpha,
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         net.to(device)
         set_parameters(net, parameters)
-
-        _, testloader = load_centralized_data(
-            task_name=task_name,
-            model_name=model_name,
-            max_seq_length=max_seq_length,
-            batch_size=batch_size,
-        )
 
         metric = load_metric("accuracy")
         total_loss = 0.0
@@ -79,9 +80,17 @@ def server_fn(context: Context):
     initial_parameters = ndarrays_to_parameters(initial_weights)
     del net
 
-    # Build on_fit_config_fn
+    learning_rate = float(cfg["learning-rate"])
+
+    # Build on_fit_config_fn with round-level cosine annealing
     def fit_config(server_round: int):
-        return {"current_round": server_round}
+        lr = cosine_annealing(
+            current_round=server_round,
+            total_round=num_rounds,
+            lrate_max=learning_rate,
+            lrate_min=1e-6,
+        )
+        return {"current_round": server_round, "learning_rate": lr}
 
     # Build evaluate function
     evaluate_fn = get_evaluate_fn(

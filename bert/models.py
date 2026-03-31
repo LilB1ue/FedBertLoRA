@@ -1,5 +1,6 @@
 """Model loading, LoRA configuration, and A/B matrix separation utilities."""
 
+import math
 from collections import OrderedDict
 from typing import Dict, List, Tuple
 
@@ -8,6 +9,17 @@ import torch
 from flwr.common.typing import NDArrays
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict
 from transformers import AutoModelForSequenceClassification
+
+
+def cosine_annealing(
+    current_round: int,
+    total_round: int,
+    lrate_max: float = 3e-4,
+    lrate_min: float = 1e-6,
+) -> float:
+    """Implement cosine annealing learning rate schedule."""
+    cos_inner = math.pi * current_round / total_round
+    return lrate_min + 0.5 * (lrate_max - lrate_min) * (1 + math.cos(cos_inner))
 
 
 def get_model(model_name: str, num_labels: int, lora_r: int, lora_alpha: int,

@@ -2,7 +2,6 @@
 
 import warnings
 
-from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, DataCollatorWithPadding
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -63,7 +62,6 @@ def load_data(
     model_name: str,
     dirichlet_alpha: float = 0.5,
     max_seq_length: int = 128,
-    batch_size: int = 32,
     test_size: float = 0.2,
 ):
     """Load a partition of GLUE data for federated learning.
@@ -75,11 +73,10 @@ def load_data(
         model_name: HuggingFace model name for tokenizer.
         dirichlet_alpha: Dirichlet distribution alpha for non-IID split.
         max_seq_length: Maximum token sequence length.
-        batch_size: DataLoader batch size.
         test_size: Fraction of data for local validation.
 
     Returns:
-        (trainloader, testloader): PyTorch DataLoaders.
+        (train_dataset, eval_dataset, tokenizer, data_collator): HF Datasets + tokenizer + collator.
     """
     from flwr_datasets import FederatedDataset
     from flwr_datasets.partitioner import DirichletPartitioner
@@ -153,31 +150,18 @@ def load_data(
 
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-    trainloader = DataLoader(
-        partition_split["train"],
-        shuffle=True,
-        batch_size=batch_size,
-        collate_fn=data_collator,
-    )
-    testloader = DataLoader(
-        partition_split["test"],
-        batch_size=batch_size,
-        collate_fn=data_collator,
-    )
-
-    return trainloader, testloader
+    return partition_split["train"], partition_split["test"], tokenizer, data_collator
 
 
 def load_centralized_data(
     task_name: str,
     model_name: str,
     max_seq_length: int = 128,
-    batch_size: int = 32,
 ):
     """Load full GLUE dataset for centralized training/evaluation.
 
     Returns:
-        (trainloader, testloader): PyTorch DataLoaders.
+        (train_dataset, eval_dataset, tokenizer, data_collator): HF Datasets + tokenizer + collator.
     """
     from datasets import load_dataset
 
@@ -218,21 +202,10 @@ def load_centralized_data(
 
     dataset.set_format("torch")
 
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
-
-    trainloader = DataLoader(
-        dataset["train"],
-        shuffle=True,
-        batch_size=batch_size,
-        collate_fn=data_collator,
-    )
 
     # Use validation set for test
     test_split = "validation_matched" if task_name == "mnli" else "validation"
-    testloader = DataLoader(
-        dataset[test_split],
-        batch_size=batch_size,
-        collate_fn=data_collator,
-    )
 
-    return trainloader, testloader
+    return dataset["train"], dataset[test_split], tokenizer, data_collator

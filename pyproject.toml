@@ -8,7 +8,7 @@ version = "2.0.0"
 description = "FedSA-LoRA: Selective Aggregation for LoRA in Federated Learning on GLUE"
 license = "Apache-2.0"
 dependencies = [
-    "flwr[simulation]>=1.18.0",
+    "flwr[simulation]==1.18.0",
     "flwr-datasets>=0.5.0",
     "torch==2.5.1",
     "transformers>=4.30.0,<5.0",
@@ -16,6 +16,7 @@ dependencies = [
     "evaluate>=0.4.0,<1.0",
     "datasets>=2.0.0,<3.0",
     "scikit-learn>=1.6.1,<2.0",
+    "click>=8.1.0,<8.2",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -34,10 +35,10 @@ num-server-rounds = 100
 fraction-fit = 1.0
 
 # Model + LoRA
-model-name = "roberta-base"
+model-name = "roberta-large"
 lora-r = 8
 lora-alpha = 16
-lora-target-modules = "query,value"
+lora-target-modules = "query,key,value,dense"
 
 # Data
 task-name = "sst2"
@@ -52,6 +53,10 @@ local-epochs = 1
 
 # Strategy: "fedsa" | "ffa" | "full"
 aggregation-mode = "fedsa"
+
+# Wandb (FL client logging)
+wandb-enabled = false
+wandb-project = "bert-federated"
 
 [tool.flwr.federations]
 default = "localhost"
