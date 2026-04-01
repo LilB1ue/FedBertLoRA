@@ -1,6 +1,8 @@
 """Model loading, LoRA configuration, and A/B matrix separation utilities."""
 
 import math
+import os
+import random
 from collections import OrderedDict
 from typing import Dict, List, Tuple
 
@@ -9,6 +11,17 @@ import torch
 from flwr.common.typing import NDArrays
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict
 from transformers import AutoModelForSequenceClassification
+
+
+def set_seed(seed: int = 42):
+    """Fix all random seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def cosine_annealing(
@@ -23,7 +36,7 @@ def cosine_annealing(
 
 
 def get_model(model_name: str, num_labels: int, lora_r: int, lora_alpha: int,
-              lora_target_modules: List[str]):
+              lora_target_modules: List[str], lora_dropout: float = 0.1):
     """Load pre-trained model with LoRA adapters for sequence classification."""
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
@@ -38,7 +51,7 @@ def get_model(model_name: str, num_labels: int, lora_r: int, lora_alpha: int,
     peft_config = LoraConfig(
         r=lora_r,
         lora_alpha=lora_alpha,
-        lora_dropout=0.1,
+        lora_dropout=lora_dropout,
         task_type="SEQ_CLS",
         target_modules=lora_target_modules,
     )

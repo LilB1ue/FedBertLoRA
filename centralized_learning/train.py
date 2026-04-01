@@ -21,7 +21,7 @@ from transformers import EarlyStoppingCallback, Trainer, TrainerCallback, Traini
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bert.dataset import get_num_labels, load_centralized_data
-from bert.models import get_model
+from bert.models import get_model, set_seed
 
 
 class FileLoggingCallback(TrainerCallback):
@@ -43,12 +43,16 @@ class FileLoggingCallback(TrainerCallback):
             f.write(f"{epoch}\t{train_loss}\t{eval_loss}\t{eval_acc}\n")
 
 
-def compute_metrics(eval_pred):
-    """Compute accuracy for GLUE classification tasks."""
-    metric = load_metric("accuracy")
-    logits, labels = eval_pred
-    predictions = np.argmax(logits, axis=-1)
-    return metric.compute(predictions=predictions, references=labels)
+def get_compute_metrics(task_name):
+    """Return compute_metrics function with task-specific GLUE metric."""
+    metric = load_metric("glue", task_name)
+
+    def compute_metrics(eval_pred):
+        logits, labels = eval_pred
+        predictions = np.argmax(logits, axis=-1)
+        return metric.compute(predictions=predictions, references=labels)
+
+    return compute_metrics
 
 
 def main():
@@ -65,6 +69,10 @@ def main():
     parser.add_argument("--grad-accum-steps", type=int, default=4)
     parser.add_argument("--max-seq-length", type=int, default=128)
     parser.add_argument("--output-dir", type=str, default="centralized_learning/checkpoints")
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--lora-dropout", type=float, default=0.1)
+    parser.add_argument("--lr-scheduler-type", type=str, default="cosine")
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--early-stopping-patience", type=int, default=3,
                         help="Stop after N epochs without improvement")
     parser.add_argument("--log-dir", type=str, default="centralized_learning/logs",
@@ -76,6 +84,8 @@ def main():
     parser.add_argument("--wandb-run-name", type=str, default=None,
                         help="Wandb run name (default: auto-generated from task/lora config)")
     args = parser.parse_args()
+
+    set_seed(args.seed)
 
     target_modules = args.lora_target_modules.split(",")
     num_labels = get_num_labels(args.task)
@@ -95,7 +105,7 @@ def main():
 
     # Load model
     print(f"Loading {args.model_name} with LoRA (r={args.lora_r}, alpha={args.lora_alpha})")
-    net = get_model(args.model_name, num_labels, args.lora_r, args.lora_alpha, target_modules)
+    net = get_model(args.model_name, num_labels, args.lora_r, args.lora_alpha, target_modules, args.lora_dropout)
 
     # Load data
     print(f"Loading {args.task} dataset...")
@@ -115,8 +125,8 @@ def main():
         per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum_steps,
         learning_rate=args.learning_rate,
-        weight_decay=0.01,
-        lr_scheduler_type="cosine",
+        weight_decay=args.weight_decay,
+        lr_scheduler_type=args.lr_scheduler_type,
         warmup_ratio=0.06,
         eval_strategy="epoch",
         save_strategy="epoch",
@@ -142,7 +152,7 @@ def main():
         eval_dataset=eval_dataset,
         data_collator=data_collator,
         processing_class=tokenizer,
-        compute_metrics=compute_metrics,
+        compute_metrics=get_compute_metrics(args.task),
         callbacks=[
             EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience),
             file_logger,

@@ -63,6 +63,7 @@ def load_data(
     dirichlet_alpha: float = 0.5,
     max_seq_length: int = 128,
     test_size: float = 0.2,
+    seed: int = 42,
 ):
     """Load a partition of GLUE data for federated learning.
 
@@ -82,7 +83,7 @@ def load_data(
     from flwr_datasets.partitioner import DirichletPartitioner
 
     task_cfg = GLUE_TASK_CONFIG[task_name]
-    cache_key = f"{task_name}_{num_partitions}_{dirichlet_alpha}"
+    cache_key = f"{task_name}_{num_partitions}_{dirichlet_alpha}_{seed}"
 
     global _fds_cache
     if cache_key not in _fds_cache:
@@ -90,9 +91,8 @@ def load_data(
             num_partitions=num_partitions,
             partition_by=task_cfg["label_field"],
             alpha=dirichlet_alpha,
-            min_partition_size=10,
-            self_balancing=True,
-            seed=42,
+            min_partition_size=0,
+            seed=seed,
         )
 
         dataset_name = task_cfg["dataset"]
@@ -113,8 +113,33 @@ def load_data(
     fds = _fds_cache[cache_key]
     partition = fds.load_partition(partition_id)
 
-    # Train/test split
-    partition_split = partition.train_test_split(test_size=test_size, seed=42)
+    # Stratified train/test split (preserve label distribution)
+    # Handle rare labels (count < 2): put them in train only, stratify the rest
+    from collections import Counter
+    from datasets import concatenate_datasets
+
+    label_col = task_cfg["label_field"]
+    label_counts = Counter(partition[label_col])
+    rare_labels = {lab for lab, cnt in label_counts.items() if cnt < 2}
+
+    if rare_labels:
+        labels = partition[label_col]
+        rare_mask = [lab in rare_labels for lab in labels]
+        main_indices = [i for i, is_rare in enumerate(rare_mask) if not is_rare]
+        rare_indices = [i for i, is_rare in enumerate(rare_mask) if is_rare]
+
+        main_dataset = partition.select(main_indices)
+        rare_dataset = partition.select(rare_indices)
+
+        split = main_dataset.train_test_split(
+            test_size=test_size, seed=seed, stratify_by_column=label_col,
+        )
+        split["train"] = concatenate_datasets([split["train"], rare_dataset])
+        partition_split = split
+    else:
+        partition_split = partition.train_test_split(
+            test_size=test_size, seed=seed, stratify_by_column=label_col,
+        )
 
     # Tokenize
     tokenizer = AutoTokenizer.from_pretrained(model_name)

@@ -51,9 +51,15 @@ batch-size = 32
 grad-accum-steps = 4
 max-seq-length = 128
 local-epochs = 1
+weight-decay = 0.01
+lora-dropout = 0.1
+lr-scheduler-type = "constant"
+test-split-ratio = 0.2
+seed = 42
+logging-steps = 10
 
 # Strategy: "fedsa" | "ffa" | "full"
-aggregation-mode = "fedsa"
+aggregation-mode = "full"
 
 # Wandb (FL client logging)
 wandb-enabled = false
@@ -63,9 +69,9 @@ wandb-project = "bert-federated"
 default = "localhost"
 
 [tool.flwr.federations.localhost]
-options.num-supernodes = 20
+options.num-supernodes = 40
 
 [tool.flwr.federations.localhost-gpu]
-options.num-supernodes = 20
+options.num-supernodes = 40
 options.backend.client-resources.num-cpus = 2
 options.backend.client-resources.num-gpus = 0.25

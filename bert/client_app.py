@@ -9,20 +9,17 @@ from torch.utils.data import DataLoader
 from transformers import Trainer, TrainingArguments
 
 from bert.dataset import load_data, get_num_labels
-from bert.models import get_model, get_parameters, set_parameters
+from bert.models import get_model, get_parameters, set_parameters, set_seed
 
 
-def compute_metrics(eval_pred):
-    """Compute accuracy for GLUE classification tasks."""
-    metric = load_metric("accuracy")
-    logits, labels = eval_pred
-    predictions = np.argmax(logits, axis=-1)
-    return metric.compute(predictions=predictions, references=labels)
 
 
 class FlowerClient(NumPyClient):
     def __init__(self, net, train_dataset, eval_dataset, tokenizer, data_collator,
-                 local_epochs, learning_rate, batch_size, grad_accum_steps):
+                 local_epochs, learning_rate, batch_size, grad_accum_steps,
+                 partition_id: int = 0, weight_decay: float = 0.01,
+                 lr_scheduler_type: str = "constant", logging_steps: int = 10,
+                 task_name: str = "sst2"):
         self.net = net
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
@@ -32,6 +29,11 @@ class FlowerClient(NumPyClient):
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.grad_accum_steps = grad_accum_steps
+        self.partition_id = partition_id
+        self.weight_decay = weight_decay
+        self.lr_scheduler_type = lr_scheduler_type
+        self.logging_steps = logging_steps
+        self.task_name = task_name
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net.to(self.device)
 
@@ -47,9 +49,9 @@ class FlowerClient(NumPyClient):
             per_device_train_batch_size=self.batch_size,
             gradient_accumulation_steps=self.grad_accum_steps,
             learning_rate=lr,
-            weight_decay=0.01,
-            lr_scheduler_type="constant",  # Server handles LR scheduling
-            logging_steps=10,
+            weight_decay=self.weight_decay,
+            lr_scheduler_type=self.lr_scheduler_type,
+            logging_steps=self.logging_steps,
             save_strategy="no",
             report_to="none",
             remove_unused_columns=False,
@@ -68,19 +70,20 @@ class FlowerClient(NumPyClient):
         return (
             get_parameters(self.net),
             len(self.train_dataset),
-            {"train_loss": results.training_loss},
+            {"train_loss": results.training_loss, "partition_id": self.partition_id},
         )
 
     def evaluate(self, parameters, config):
         set_parameters(self.net, parameters)
-        loss, accuracy = test(self.net, self.eval_dataset, self.data_collator,
-                              self.batch_size, self.device)
-        return float(loss), len(self.eval_dataset), {"accuracy": accuracy}
+        loss, eval_metrics = test(self.net, self.eval_dataset, self.data_collator,
+                                  self.batch_size, self.device, self.task_name)
+        metrics = {**eval_metrics, "partition_id": self.partition_id}
+        return float(loss), len(self.eval_dataset), metrics
 
 
-def test(net, eval_dataset, data_collator, batch_size, device):
-    """Evaluate the model and return loss + accuracy."""
-    metric = load_metric("accuracy")
+def test(net, eval_dataset, data_collator, batch_size, device, task_name="sst2"):
+    """Evaluate the model and return loss + task-specific metrics."""
+    metric = load_metric("glue", task_name)
     testloader = DataLoader(eval_dataset, batch_size=batch_size, collate_fn=data_collator)
     total_loss = 0.0
     net.eval()
@@ -93,8 +96,8 @@ def test(net, eval_dataset, data_collator, batch_size, device):
             metric.add_batch(predictions=predictions, references=batch["labels"])
 
     avg_loss = total_loss / len(testloader) if len(testloader) > 0 else 0.0
-    accuracy = metric.compute()["accuracy"]
-    return avg_loss, accuracy
+    results = metric.compute()  # {"accuracy": ...} or {"accuracy": ..., "f1": ...} for QQP
+    return avg_loss, results
 
 
 def client_fn(context: Context):
@@ -115,6 +118,14 @@ def client_fn(context: Context):
     local_epochs = int(cfg["local-epochs"])
     learning_rate = float(cfg["learning-rate"])
     grad_accum_steps = int(cfg["grad-accum-steps"])
+    weight_decay = float(cfg["weight-decay"])
+    lora_dropout = float(cfg["lora-dropout"])
+    lr_scheduler_type = str(cfg["lr-scheduler-type"])
+    test_split_ratio = float(cfg["test-split-ratio"])
+    seed = int(cfg["seed"])
+    logging_steps = int(cfg["logging-steps"])
+
+    set_seed(seed)
 
     num_labels = get_num_labels(task_name)
 
@@ -126,6 +137,8 @@ def client_fn(context: Context):
         model_name=model_name,
         dirichlet_alpha=dirichlet_alpha,
         max_seq_length=max_seq_length,
+        test_size=test_split_ratio,
+        seed=seed,
     )
 
     # Load model
@@ -135,6 +148,7 @@ def client_fn(context: Context):
         lora_r=lora_r,
         lora_alpha=lora_alpha,
         lora_target_modules=target_modules,
+        lora_dropout=lora_dropout,
     )
 
     return FlowerClient(
@@ -143,6 +157,11 @@ def client_fn(context: Context):
         learning_rate=learning_rate,
         batch_size=batch_size,
         grad_accum_steps=grad_accum_steps,
+        partition_id=partition_id,
+        weight_decay=weight_decay,
+        lr_scheduler_type=lr_scheduler_type,
+        logging_steps=logging_steps,
+        task_name=task_name,
     ).to_client()
 
 
