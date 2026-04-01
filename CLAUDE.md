@@ -38,7 +38,7 @@ python centralized_learning/train.py --task qnli --epochs 10 --wandb
 
 ```toml
 # 切換策略
-aggregation-mode = "fedsa"   # "fedsa" | "ffa" | "full"
+aggregation-mode = "fedsa"   # "fedavg" | "fedsa" | "ffa"
 
 # 切換任務 + LoRA rank
 task-name = "sst2"           # "sst2" | "qnli" | "mnli" | "qqp" | "rte"

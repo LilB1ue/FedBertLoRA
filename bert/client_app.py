@@ -1,5 +1,7 @@
 """Flower ClientApp: Local LoRA training on GLUE tasks using HF Trainer."""
 
+import os
+
 import numpy as np
 import torch
 from evaluate import load as load_metric
@@ -19,7 +21,7 @@ class FlowerClient(NumPyClient):
                  local_epochs, learning_rate, batch_size, grad_accum_steps,
                  partition_id: int = 0, weight_decay: float = 0.01,
                  lr_scheduler_type: str = "constant", logging_steps: int = 10,
-                 task_name: str = "sst2"):
+                 task_name: str = "sst2", checkpoint_dir: str = None):
         self.net = net
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
@@ -34,6 +36,7 @@ class FlowerClient(NumPyClient):
         self.lr_scheduler_type = lr_scheduler_type
         self.logging_steps = logging_steps
         self.task_name = task_name
+        self.checkpoint_dir = checkpoint_dir
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net.to(self.device)
 
@@ -67,10 +70,33 @@ class FlowerClient(NumPyClient):
 
         results = trainer.train()
 
+        # Local eval on the same model (before aggregation) for overfitting tracking
+        eval_loss, eval_metrics = test(self.net, self.eval_dataset, self.data_collator,
+                                       self.batch_size, self.device, self.task_name)
+
+        fit_metrics = {
+            "partition_id": self.partition_id,
+            "train_loss": results.training_loss,
+            "eval_loss": eval_loss,
+            "train_samples": len(self.train_dataset),
+            "eval_samples": len(self.eval_dataset),
+        }
+        for k, v in eval_metrics.items():
+            fit_metrics[f"eval_{k}"] = v
+
+        # Save per-client LoRA checkpoint
+        current_round = config.get("current_round", 0)
+        if self.checkpoint_dir:
+            save_path = os.path.join(
+                self.checkpoint_dir, f"round_{current_round}", f"client_{self.partition_id}"
+            )
+            os.makedirs(save_path, exist_ok=True)
+            self.net.save_pretrained(save_path)
+
         return (
             get_parameters(self.net),
             len(self.train_dataset),
-            {"train_loss": results.training_loss, "partition_id": self.partition_id},
+            fit_metrics,
         )
 
     def evaluate(self, parameters, config):
@@ -124,6 +150,9 @@ def client_fn(context: Context):
     test_split_ratio = float(cfg["test-split-ratio"])
     seed = int(cfg["seed"])
     logging_steps = int(cfg["logging-steps"])
+    log_dir = str(cfg.get("log-dir", "logs"))
+    aggregation_mode = str(cfg.get("aggregation-mode", "fedavg"))
+    checkpoint_dir = os.path.join(log_dir, f"{task_name}_{aggregation_mode}", "client_checkpoints")
 
     set_seed(seed)
 
@@ -162,6 +191,7 @@ def client_fn(context: Context):
         lr_scheduler_type=lr_scheduler_type,
         logging_steps=logging_steps,
         task_name=task_name,
+        checkpoint_dir=checkpoint_dir,
     ).to_client()
 
 

@@ -3,8 +3,10 @@
 Supports multiple aggregation modes:
   - "fedsa":  FedSA-LoRA — aggregate A only, B stays local (default)
   - "ffa":    FFA-LoRA — freeze A (not aggregated), aggregate B only
-  - "full":   Standard FedAvg — aggregate both A and B
   - "cluster": (future) Clustering-based B aggregation + global A
+
+Note: "fedavg" (standard FedAvg) is handled by FedAvgStrategy in strategy.py,
+not by this class.
 """
 
 import logging
@@ -176,16 +178,6 @@ class FedSALoRAStrategy(FedAvg):
 
             combined = self._reconstruct_parameters(agg_a, agg_b, agg_other)
             logger.info(f"Round {server_round}: FFA-LoRA — aggregated B, A frozen")
-
-        elif self.aggregation_mode == "full":
-            # Standard FedAvg: aggregate both A and B
-            agg_a = self._weighted_average(client_a_list, client_weights)
-            agg_b = self._weighted_average(client_b_list, client_weights)
-            self.global_a_matrices = agg_a
-            self.global_b_matrices = agg_b
-
-            combined = self._reconstruct_parameters(agg_a, agg_b, agg_other)
-            logger.info(f"Round {server_round}: Full FedAvg — aggregated A+B")
 
         else:
             raise ValueError(f"Unknown aggregation_mode: {self.aggregation_mode}")
