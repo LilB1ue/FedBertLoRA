@@ -11,16 +11,36 @@ Usage:
 import argparse
 import os
 import sys
+from datetime import datetime
 
 import numpy as np
 from evaluate import load as load_metric
-from transformers import EarlyStoppingCallback, Trainer, TrainingArguments
+from transformers import EarlyStoppingCallback, Trainer, TrainerCallback, TrainingArguments
 
 # Add parent dir to path so we can import bert package
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bert.dataset import get_num_labels, load_centralized_data
 from bert.models import get_model
+
+
+class FileLoggingCallback(TrainerCallback):
+    """Write epoch-level metrics to a log file."""
+
+    def __init__(self, log_path):
+        self.log_path = log_path
+        with open(log_path, "w") as f:
+            f.write("epoch\ttrain_loss\teval_loss\teval_accuracy\n")
+
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        if metrics is None:
+            return
+        epoch = int(state.epoch)
+        train_loss = state.log_history[-2].get("loss", "") if len(state.log_history) >= 2 else ""
+        eval_loss = metrics.get("eval_loss", "")
+        eval_acc = metrics.get("eval_accuracy", "")
+        with open(self.log_path, "a") as f:
+            f.write(f"{epoch}\t{train_loss}\t{eval_loss}\t{eval_acc}\n")
 
 
 def compute_metrics(eval_pred):
@@ -47,6 +67,8 @@ def main():
     parser.add_argument("--output-dir", type=str, default="centralized_learning/checkpoints")
     parser.add_argument("--early-stopping-patience", type=int, default=3,
                         help="Stop after N epochs without improvement")
+    parser.add_argument("--log-dir", type=str, default="centralized_learning/logs",
+                        help="Directory to save per-epoch training logs")
     # Wandb
     parser.add_argument("--wandb", action="store_true", help="Enable wandb logging")
     parser.add_argument("--wandb-project", type=str, default="bert-centralized",
@@ -62,7 +84,8 @@ def main():
     if args.wandb:
         import wandb
         os.environ["WANDB_LOG_MODEL"] = "false"
-        run_name = args.wandb_run_name or f"{args.task}_r{args.lora_r}_lr{args.learning_rate}"
+        ts = datetime.now().strftime("%m%d_%H%M")
+        run_name = args.wandb_run_name or f"{args.task}_r{args.lora_r}_{ts}"
         wandb.init(
             project=args.wandb_project,
             name=run_name,
@@ -97,14 +120,20 @@ def main():
         warmup_ratio=0.06,
         eval_strategy="epoch",
         save_strategy="epoch",
-        save_total_limit=3,
+        save_total_limit=args.epochs,
         load_best_model_at_end=True,
         metric_for_best_model="accuracy",
         greater_is_better=True,
-        logging_strategy="epoch",
+        logging_strategy="steps",
+        logging_steps=50,
         report_to="wandb" if args.wandb else "none",
         remove_unused_columns=False,
     )
+
+    # Setup per-epoch file logging
+    os.makedirs(args.log_dir, exist_ok=True)
+    log_path = os.path.join(args.log_dir, f"{args.task}_r{args.lora_r}.tsv")
+    file_logger = FileLoggingCallback(log_path)
 
     trainer = Trainer(
         model=net,
@@ -114,7 +143,10 @@ def main():
         data_collator=data_collator,
         processing_class=tokenizer,
         compute_metrics=compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience)],
+        callbacks=[
+            EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience),
+            file_logger,
+        ],
     )
 
     trainer.train()

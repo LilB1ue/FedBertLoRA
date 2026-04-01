@@ -17,6 +17,7 @@ dependencies = [
     "datasets>=2.0.0,<3.0",
     "scikit-learn>=1.6.1,<2.0",
     "click>=8.1.0,<8.2",
+    "wandb>=0.15.0",
 ]
 
 [tool.hatch.build.targets.wheel]

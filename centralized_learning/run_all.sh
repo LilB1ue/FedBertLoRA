@@ -11,11 +11,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
-LOG_DIR="centralized_learning/logs"
-mkdir -p "$LOG_DIR"
-
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-
 # Pass extra args (e.g. --wandb) from command line
 EXTRA_ARGS="$@"
 
@@ -31,16 +26,14 @@ TASKS=(
 
 echo "=========================================="
 echo "Centralized LoRA Training - All GLUE Tasks"
-echo "Timestamp: $TIMESTAMP"
 echo "Extra args: $EXTRA_ARGS"
 echo "=========================================="
 
 for task_config in "${TASKS[@]}"; do
     read -r TASK LORA_R <<< "$task_config"
-    LOG_FILE="${LOG_DIR}/${TASK}_r${LORA_R}_${TIMESTAMP}.log"
 
     echo ""
-    echo ">>> Starting ${TASK} (LoRA r=${LORA_R}) | Log: ${LOG_FILE}"
+    echo ">>> Starting ${TASK} (LoRA r=${LORA_R})"
     echo ">>> $(date)"
 
     python centralized_learning/train.py \
@@ -48,8 +41,7 @@ for task_config in "${TASKS[@]}"; do
         --lora-r "$LORA_R" \
         --epochs 10 \
         --early-stopping-patience 3 \
-        $EXTRA_ARGS \
-        2>&1 | tee "$LOG_FILE"
+        $EXTRA_ARGS
 
     echo ">>> Finished ${TASK} at $(date)"
     echo ""
@@ -57,5 +49,5 @@ done
 
 echo "=========================================="
 echo "All tasks complete!"
-echo "Logs saved to: ${LOG_DIR}/"
+echo "Logs: centralized_learning/logs/"
 echo "=========================================="
