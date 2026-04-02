@@ -202,6 +202,8 @@ def server_fn(context: Context):
     log_dir = str(cfg.get("log-dir", "logs"))
     wandb_enabled = bool(cfg.get("wandb-enabled", False))
     wandb_project = str(cfg.get("wandb-project", "bert-federated"))
+    num_clients = int(cfg.get("num-clients", 0))
+    learning_rate = float(cfg["learning-rate"])
 
     set_seed(seed)
 
@@ -209,11 +211,31 @@ def server_fn(context: Context):
     if wandb_enabled:
         import wandb
         ts = datetime.now().strftime("%m%d_%H%M")
-        run_name = f"{task_name}_{aggregation_mode}_{ts}"
+        run_name = f"{task_name}_{aggregation_mode}_c{num_clients}_{ts}"
         wandb.init(
             project=wandb_project,
             name=run_name,
-            config=dict(cfg),
+            config={
+                "task_name": task_name,
+                "model_name": model_name,
+                "aggregation_mode": aggregation_mode,
+                "num_server_rounds": num_rounds,
+                "num_clients": num_clients,
+                "fraction_fit": fraction_fit,
+                "dirichlet_alpha": float(cfg.get("dirichlet-alpha", 0.5)),
+                "learning_rate": learning_rate,
+                "batch_size": batch_size,
+                "grad_accum_steps": int(cfg.get("grad-accum-steps", 1)),
+                "local_epochs": int(cfg.get("local-epochs", 1)),
+                "max_seq_length": max_seq_length,
+                "lora_r": lora_r,
+                "lora_alpha": lora_alpha,
+                "lora_target_modules": target_modules,
+                "lora_dropout": lora_dropout,
+                "weight_decay": float(cfg.get("weight-decay", 0.01)),
+                "lr_scheduler_type": str(cfg.get("lr-scheduler-type", "constant")),
+                "seed": seed,
+            },
             settings=wandb.Settings(_disable_stats=True, _disable_meta=True),
         )
 
@@ -225,8 +247,6 @@ def server_fn(context: Context):
     lora_param_keys = get_parameter_keys(net)
     initial_parameters = ndarrays_to_parameters(initial_weights)
     del net
-
-    learning_rate = float(cfg["learning-rate"])
 
     # Setup log paths (logs/<timestamp>/<task>_<strategy>/)
     log_timestamp = str(cfg.get("log-timestamp", "")) or datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -244,7 +264,7 @@ def server_fn(context: Context):
             lrate_max=learning_rate,
             lrate_min=1e-6,
         )
-        return {"current_round": server_round, "learning_rate": lr}
+        return {"current_round": server_round, "learning_rate": lr, "log_timestamp": log_timestamp}
 
     # Build evaluate function
     evaluate_fn = get_evaluate_fn(

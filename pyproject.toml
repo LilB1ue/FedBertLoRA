@@ -43,6 +43,7 @@ lora-target-modules = "query,key,value,dense"
 
 # Data
 task-name = "sst2"
+num-clients = 30  # must match [federations] num-supernodes
 dirichlet-alpha = 0.5
 
 # Training
@@ -71,6 +72,6 @@ wandb-project = "bert-federated"
 default = "local-simulation"
 
 [tool.flwr.federations.local-simulation]
-options.num-supernodes = 40
+options.num-supernodes = 30
 options.backend.client-resources.num-cpus = 4.0
 options.backend.client-resources.num-gpus = 1.0
