@@ -21,7 +21,8 @@ class FlowerClient(NumPyClient):
                  local_epochs, learning_rate, batch_size, grad_accum_steps,
                  partition_id: int = 0, weight_decay: float = 0.01,
                  lr_scheduler_type: str = "constant", logging_steps: int = 10,
-                 task_name: str = "sst2", checkpoint_dir: str = None):
+                 task_name: str = "sst2", checkpoint_dir: str = None,
+                 seed: int = 42):
         self.net = net
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
@@ -37,6 +38,7 @@ class FlowerClient(NumPyClient):
         self.logging_steps = logging_steps
         self.task_name = task_name
         self.checkpoint_dir = checkpoint_dir
+        self.seed = seed
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net.to(self.device)
 
@@ -55,6 +57,7 @@ class FlowerClient(NumPyClient):
             weight_decay=self.weight_decay,
             lr_scheduler_type=self.lr_scheduler_type,
             logging_steps=self.logging_steps,
+            seed=self.seed,
             save_strategy="no",
             report_to="none",
             remove_unused_columns=False,
@@ -93,8 +96,12 @@ class FlowerClient(NumPyClient):
             os.makedirs(save_path, exist_ok=True)
             self.net.save_pretrained(save_path)
 
+        params = get_parameters(self.net)
+        del self.net
+        torch.cuda.empty_cache()
+
         return (
-            get_parameters(self.net),
+            params,
             len(self.train_dataset),
             fit_metrics,
         )
@@ -103,6 +110,8 @@ class FlowerClient(NumPyClient):
         set_parameters(self.net, parameters)
         loss, eval_metrics = test(self.net, self.eval_dataset, self.data_collator,
                                   self.batch_size, self.device, self.task_name)
+        del self.net
+        torch.cuda.empty_cache()
         metrics = {**eval_metrics, "partition_id": self.partition_id}
         return float(loss), len(self.eval_dataset), metrics
 
@@ -192,6 +201,7 @@ def client_fn(context: Context):
         logging_steps=logging_steps,
         task_name=task_name,
         checkpoint_dir=checkpoint_dir,
+        seed=seed,
     ).to_client()
 
 

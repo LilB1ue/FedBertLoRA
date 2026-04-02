@@ -58,6 +58,7 @@ test-split-ratio = 0.2
 seed = 42
 logging-steps = 10
 log-dir = "logs"
+log-timestamp = ""
 
 # Strategy: "fedavg" | "fedsa" | "ffa"
 aggregation-mode = "fedavg"
@@ -67,12 +68,9 @@ wandb-enabled = false
 wandb-project = "bert-federated"
 
 [tool.flwr.federations]
-default = "localhost"
+default = "local-simulation"
 
-[tool.flwr.federations.localhost]
+[tool.flwr.federations.local-simulation]
 options.num-supernodes = 40
-
-[tool.flwr.federations.localhost-gpu]
-options.num-supernodes = 40
-options.backend.client-resources.num-cpus = 2
-options.backend.client-resources.num-gpus = 1
+options.backend.client-resources.num-cpus = 4.0
+options.backend.client-resources.num-gpus = 1.0

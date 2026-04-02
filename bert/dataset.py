@@ -91,7 +91,7 @@ def load_data(
             num_partitions=num_partitions,
             partition_by=task_cfg["label_field"],
             alpha=dirichlet_alpha,
-            min_partition_size=0,
+            min_partition_size=10,
             seed=seed,
         )
 

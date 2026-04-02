@@ -42,9 +42,10 @@ def get_metrics_aggregation_fn(log_path, phase, use_wandb=False):
                 f.write("round\tpartition_id\tnum_examples\t" + "\t".join(metric_keys) + "\n")
             _header_written[0] = True
 
-        # Write per-client rows
+        # Write per-client rows (sorted by partition_id)
+        sorted_metrics = sorted(metrics_list, key=lambda x: x[1].get("partition_id", 0))
         with open(log_path, "a") as f:
-            for num_examples, client_metrics in metrics_list:
+            for num_examples, client_metrics in sorted_metrics:
                 pid = client_metrics.get("partition_id", "?")
                 values = [str(client_metrics.get(k, "")) for k in metric_keys]
                 f.write(f"{current_round}\t{pid}\t{num_examples}\t" + "\t".join(values) + "\n")
@@ -57,7 +58,7 @@ def get_metrics_aggregation_fn(log_path, phase, use_wandb=False):
             if vals and total > 0:
                 raw_vals = [v for _, v in vals]
                 aggregated[key] = sum(n * v for n, v in vals) / total
-                aggregated[f"{key}_std"] = float(torch.tensor(raw_vals).std())
+                aggregated[f"{key}_std"] = float(torch.tensor(raw_vals, dtype=torch.float64).std())
                 aggregated[f"{key}_min"] = min(raw_vals)
                 aggregated[f"{key}_max"] = max(raw_vals)
 
@@ -227,8 +228,9 @@ def server_fn(context: Context):
 
     learning_rate = float(cfg["learning-rate"])
 
-    # Setup log paths
-    log_subdir = os.path.join(log_dir, f"{task_name}_{aggregation_mode}")
+    # Setup log paths (logs/<timestamp>/<task>_<strategy>/)
+    log_timestamp = str(cfg.get("log-timestamp", "")) or datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_subdir = os.path.join(log_dir, log_timestamp, f"{task_name}_{aggregation_mode}")
     fit_log_path = os.path.join(log_subdir, "fit_metrics.tsv")
     eval_log_path = os.path.join(log_subdir, "eval_metrics.tsv")
     server_log_path = os.path.join(log_subdir, "server_eval.tsv")

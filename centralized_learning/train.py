@@ -127,6 +127,7 @@ def main():
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         lr_scheduler_type=args.lr_scheduler_type,
+        seed=args.seed,
         warmup_ratio=0.06,
         eval_strategy="epoch",
         save_strategy="epoch",
