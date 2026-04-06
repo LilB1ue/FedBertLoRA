@@ -212,7 +212,7 @@ def server_fn(context: Context):
     if wandb_enabled:
         import wandb
         ts = datetime.now().strftime("%m%d_%H%M")
-        run_name = f"{task_name}_{aggregation_mode}_c{num_clients}_{ts}"
+        run_name = f"{task_name}_{aggregation_mode}_c{num_clients}_r{num_rounds}_{ts}"
         wandb.init(
             project=wandb_project,
             name=run_name,

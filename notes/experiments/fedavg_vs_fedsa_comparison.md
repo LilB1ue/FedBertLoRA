@@ -54,21 +54,21 @@
 
 | SST-2 | QNLI |
 |-------|------|
-| ![SST-2](../../plots/accuracy_sst2.png) | ![QNLI](../../plots/accuracy_qnli.png) |
+| ![SST-2](../../plots/fedavg_vs_fedsa_r20_c30_accuracy_sst2.png) | ![QNLI](../../plots/fedavg_vs_fedsa_r20_c30_accuracy_qnli.png) |
 
 | MNLI | QQP |
 |------|-----|
-| ![MNLI](../../plots/accuracy_mnli.png) | ![QQP](../../plots/accuracy_qqp.png) |
+| ![MNLI](../../plots/fedavg_vs_fedsa_r20_c30_accuracy_mnli.png) | ![QQP](../../plots/fedavg_vs_fedsa_r20_c30_accuracy_qqp.png) |
 
 ## Server Loss 曲線
 
 | SST-2 | QNLI |
 |-------|------|
-| ![SST-2](../../plots/loss_sst2.png) | ![QNLI](../../plots/loss_qnli.png) |
+| ![SST-2](../../plots/fedavg_vs_fedsa_r20_c30_server_loss_sst2.png) | ![QNLI](../../plots/fedavg_vs_fedsa_r20_c30_server_loss_qnli.png) |
 
 | MNLI | QQP |
 |------|-----|
-| ![MNLI](../../plots/loss_mnli.png) | ![QQP](../../plots/loss_qqp.png) |
+| ![MNLI](../../plots/fedavg_vs_fedsa_r20_c30_server_loss_mnli.png) | ![QQP](../../plots/fedavg_vs_fedsa_r20_c30_server_loss_qqp.png) |
 
 ## 指標說明
 
