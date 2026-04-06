@@ -137,3 +137,55 @@ wandb login
 | Overfitting 判斷（per-client） | fit_metrics.tsv 的 train_loss vs eval_loss | fit/train_loss vs fit/eval_loss（聚合版） |
 
 **原則：TSV 是 ground truth（per-client 細節），Wandb 是即時監控（聚合概覽）。**
+
+---
+
+## Wandb Dashboard 圖表說明
+
+Wandb 會根據記錄的 metrics 自動生成 line charts。以下列出每個 section 對應的圖表及其用途。
+
+### Server Section（全域模型品質）
+
+| 圖表 | Metric | 說明 |
+|------|--------|------|
+| Server Accuracy | `server/accuracy` | **最重要的曲線**。全域模型在完整 validation set 的 accuracy，用來判斷 best round 和 overfitting |
+| Server Loss | `server/loss` | 全域模型 validation loss，通常比 accuracy 更早反映 overfitting |
+| Server F1 | `server/f1` | QQP 任務專用（accuracy + F1 雙指標） |
+| Server Accuracy MM | `server/accuracy_mm` | MNLI 任務專用，mismatched validation set 的 accuracy |
+
+### Fit Section（Client 訓練後的聚合指標）
+
+| 圖表 | Metric | 說明 |
+|------|--------|------|
+| Client Eval Accuracy | `fit/eval_accuracy` | 所有 client 本地 eval accuracy 的加權平均 |
+| Client Eval Accuracy Std | `fit/eval_accuracy_std` | client 間 accuracy 差異程度，反映 non-IID 的影響 |
+| Client Eval Accuracy Min/Max | `fit/eval_accuracy_min`, `fit/eval_accuracy_max` | 最弱/最強 client，min 是 personalization 的核心指標 |
+| Client Train Loss | `fit/train_loss` | client 訓練 loss 加權平均 |
+| Client Train Loss Std | `fit/train_loss_std` | 訓練 loss 跨 client 分散程度 |
+| Client Eval Loss | `fit/eval_loss` | client 本地 eval loss 加權平均 |
+| Client Eval F1 | `fit/eval_f1` | QQP 任務專用 |
+
+### Evaluate Section（全域模型在各 client 本地 test 的聚合）
+
+| 圖表 | Metric | 說明 |
+|------|--------|------|
+| Evaluate Accuracy | `evaluate/eval_accuracy` | 全域模型在各 client 本地 test set 的加權平均 accuracy |
+| Evaluate Accuracy Std/Min/Max | `evaluate/eval_accuracy_std`, `_min`, `_max` | 全域模型在不同 client 上的表現差異 |
+| Evaluate Loss | `evaluate/eval_loss` + `_std`/`_min`/`_max` | 對應的 loss 分佈 |
+
+### 關鍵圖表用途對照
+
+| 分析目的 | 看哪些圖 |
+|----------|----------|
+| 判斷 best round / 是否 overfitting | `server/accuracy` + `server/loss` |
+| 比較不同策略（FedAvg vs FedSA） | 多 run 疊 `server/accuracy` |
+| 評估 non-IID 影響程度 | `fit/eval_accuracy_std` + `fit/eval_accuracy_min` |
+| 評估 personalization 效果 | `fit/eval_accuracy_min`（FedSA 應讓 worst client 提升） |
+| 判斷 client drift / divergence | `fit/train_loss_std` 是否隨 round 持續增大 |
+| Overfitting 細節 | `fit/train_loss`↓ 但 `server/loss`↑ 就是 overfitting |
+
+### Wandb 多 Run 比較技巧
+
+- 在同一個 project (`bert-federated`) 下，可用 **Group by** run name prefix（如 `sst2_*`）來比較同任務不同策略
+- 用 **Filter** 篩選 `config.aggregation_mode` 或 `config.task_name`
+- **Panel** 疊圖時選 x-axis = `round`（不是 `_step`），確保對齊

@@ -11,6 +11,9 @@ results/
 # Wandb
 wandb/
 
+# Experiment logs (checkpoints + TSV, regenerated each run)
+logs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

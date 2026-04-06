@@ -62,7 +62,7 @@ log-dir = "logs"
 log-timestamp = ""
 
 # Strategy: "fedavg" | "fedsa" | "ffa"
-aggregation-mode = "fedavg"
+aggregation-mode = "fedsa"
 
 # Wandb (FL client logging)
 wandb-enabled = false

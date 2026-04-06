@@ -1,5 +1,6 @@
 """Flower ServerApp: Initialize model + strategy selection."""
 
+import logging
 import os
 from datetime import datetime
 
@@ -255,6 +256,23 @@ def server_fn(context: Context):
     eval_log_path = os.path.join(log_subdir, "eval_metrics.tsv")
     server_log_path = os.path.join(log_subdir, "server_eval.tsv")
     global_ckpt_dir = os.path.join(log_subdir, "global_checkpoints")
+
+    # Capture Flower's [SUMMARY] output to file
+    class _SummaryFilter(logging.Filter):
+        def __init__(self):
+            super().__init__()
+            self.capturing = False
+        def filter(self, record):
+            if "[SUMMARY]" in record.getMessage():
+                self.capturing = True
+            return self.capturing
+
+    os.makedirs(log_subdir, exist_ok=True)
+    flwr_logger = logging.getLogger("flwr")
+    summary_handler = logging.FileHandler(os.path.join(log_subdir, "summary.log"))
+    summary_handler.setLevel(logging.INFO)
+    summary_handler.addFilter(_SummaryFilter())
+    flwr_logger.addHandler(summary_handler)
 
     # Build on_fit_config_fn with round-level cosine annealing
     def fit_config(server_round: int):

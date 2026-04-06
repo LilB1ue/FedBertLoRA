@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 專案概述
 
-基於 Flower 框架實作 **FedSA-LoRA**（Selective Aggregation for Low-Rank Adaptation）聯邦學習實驗。使用 `roberta-large` (355M) + PEFT LoRA 在 GLUE benchmark (SST-2, QNLI, MNLI) 上進行分散式微調，以 Dirichlet 分佈模擬 non-IID 資料分割 (20 clients)。
+基於 Flower 框架實作 **FedSA-LoRA**（Selective Aggregation for Low-Rank Adaptation）聯邦學習實驗。使用 `roberta-large` (355M) + PEFT LoRA 在 GLUE benchmark (SST-2, QNLI, MNLI, QQP, RTE) 上進行分散式微調，以 Dirichlet 分佈模擬 non-IID 資料分割 (30 clients)。
 
 核心策略：只聚合 LoRA A 矩陣（general knowledge），B 矩陣留在 client 端（client-specific knowledge）。支援切換為 FFA-LoRA、標準 FedAvg 等模式。
 
@@ -19,7 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # 安裝依賴
 pip install -e .
 
-# 聯邦學習 (預設 FedSA-LoRA, SST-2, 20 clients, 100 rounds)
+# 聯邦學習 (預設 FedSA-LoRA, SST-2, 30 clients, 20 rounds)
 flwr run .
 
 # GPU 模式
@@ -32,6 +32,10 @@ bash centralized_learning/run_all.sh --wandb   # 加 wandb logging
 # 單一任務
 python centralized_learning/train.py --task sst2
 python centralized_learning/train.py --task qnli --epochs 10 --wandb
+
+# FedAvg 全任務批次跑（含 wandb）
+bash run_fedavg_all.sh              # local simulation
+bash run_fedavg_all.sh localhost-gpu  # GPU mode
 ```
 
 ### 快速切換實驗設定 (修改 pyproject.toml)
@@ -42,7 +46,7 @@ aggregation-mode = "fedsa"   # "fedavg" | "fedsa" | "ffa"
 
 # 切換任務 + LoRA rank
 task-name = "sst2"           # "sst2" | "qnli" | "mnli" | "qqp" | "rte"
-lora-r = 8                   # SST-2 用 8, QNLI/MNLI 用 16
+lora-r = 8                   # 全部任務統一 r=8
 
 # 切換 non-IID 程度
 dirichlet-alpha = 0.5        # 0.1(嚴重) / 0.5(中等) / 1.0(輕微)
@@ -52,16 +56,18 @@ dirichlet-alpha = 0.5        # 0.1(嚴重) / 0.5(中等) / 1.0(輕微)
 
 ```
 bert/
-├── models.py       # LoRA 模型載入 + A/B 矩陣分離 + cosine_annealing LR schedule
-├── dataset.py      # GLUE 資料載入 + DirichletPartitioner non-IID 分割
-├── strategy.py     # FedSALoRAStrategy(FedAvg): selective aggregation 核心邏輯
-├── client_app.py   # FlowerClient: 本地 LoRA 訓練 (AdamW, LR from server-side cosine annealing)
-├── server_app.py   # ServerApp: 初始化模型 + strategy + server-side evaluation
+├── models.py          # LoRA 模型載入 + A/B 矩陣分離 + cosine_annealing LR schedule
+├── dataset.py         # GLUE 資料載入 + DirichletPartitioner non-IID 分割
+├── strategy.py        # FedAvgStrategy: 標準 FedAvg 策略
+├── fedsa_strategy.py  # FedSALoRAStrategy: selective aggregation (FedSA/FFA 模式)
+├── client_app.py      # FlowerClient: 本地 LoRA 訓練 (AdamW, LR from server-side cosine annealing)
+├── server_app.py      # ServerApp: 初始化模型 + strategy 選擇 + server-side evaluation + wandb
 └── __init__.py
 centralized_learning/
-├── train.py        # 集中式訓練 (HF Trainer, early stopping, wandb, MNLI-mm eval)
-└── run_all.sh      # 批次跑全部 GLUE 任務 + log 存檔
-pyproject.toml      # Flower 配置 + 所有超參數
+├── train.py           # 集中式訓練 (HF Trainer, early stopping, wandb, MNLI-mm eval)
+└── run_all.sh         # 批次跑全部 GLUE 任務 + log 存檔
+run_fedavg_all.sh      # FedAvg 全任務批次跑（含 wandb）
+pyproject.toml         # Flower 配置 + 所有超參數
 ```
 
 ### 資料流 (FedSA-LoRA 模式)
@@ -87,7 +93,7 @@ pyproject.toml      # Flower 配置 + 所有超參數
 | `lora-target-modules` | `query,key,value,dense` | LoRA 套用的模組（attention Q/K/V + 所有 dense） |
 | `aggregation-mode` | `fedsa` | 聚合策略 |
 | `dirichlet-alpha` | `0.5` | Non-IID 程度 |
-| `num-server-rounds` | `100` | FL 總輪數 |
+| `num-server-rounds` | `20` | FL 總輪數 |
 | `fraction-fit` | `1.0` | 每輪參與比例 |
 | `learning-rate` | `0.001` | AdamW 最大學習率 (cosine annealing lrate_max) |
 | `batch-size` / `grad-accum-steps` | `32` / `4` | Effective batch = 128 |
@@ -109,7 +115,7 @@ pyproject.toml      # Flower 配置 + 所有超參數
 ## 設計備註
 
 - `dataset.py` 中 `_fds_cache` 以 `(task, num_partitions, alpha)` 為 key 做全域快取
-- `strategy.py` 中 `client_b_matrices: Dict[str, List[np.ndarray]]` 追蹤每個 client 的 B 矩陣狀態
+- `fedsa_strategy.py` 中 `client_b_matrices: Dict[str, List[np.ndarray]]` 追蹤每個 client 的 B 矩陣狀態
 - `aggregation_mode` 設計為可擴展：未來可加入 `"cluster"` 模式實作 clustering-based B aggregation
 - 集中式和聯邦式共用 `bert/models.py` + `bert/dataset.py`，確保模型架構和資料處理一致
 - FL client 使用 `lr_scheduler_type="constant"`，LR 由 server-side cosine annealing 每輪控制

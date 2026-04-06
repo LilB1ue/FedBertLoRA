@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from flwr.common import (
+    EvaluateIns,
     FitIns,
     FitRes,
     Parameters,
@@ -62,17 +63,18 @@ class FedSALoRAStrategy(FedAvg):
         logger.info(f"FedSALoRAStrategy initialized with mode: {aggregation_mode}")
 
     def _separate_a_b(self, parameters: NDArrays) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray]]:
-        """Separate parameters into A matrices, B matrices, and other params.
+        """Separate parameters into A matrices, B matrices + classifier, and other params.
 
         Uses lora_param_keys for name-based separation.
+        Classifier params are grouped with B (both are client-local in FedSA-LoRA).
         """
         a_params = []
-        b_params = []
+        b_params = []  # includes lora_B + classifier (client-local)
         other_params = []
         for key, param in zip(self.lora_param_keys, parameters):
             if "lora_A" in key:
                 a_params.append(param)
-            elif "lora_B" in key:
+            elif "lora_B" in key or "classifier" in key or "score" in key:
                 b_params.append(param)
             else:
                 other_params.append(param)
@@ -84,14 +86,14 @@ class FedSALoRAStrategy(FedAvg):
         b_params: List[np.ndarray],
         other_params: List[np.ndarray],
     ) -> NDArrays:
-        """Reconstruct flat parameter array from separated A, B, and other params."""
+        """Reconstruct flat parameter array from separated A, B+classifier, and other params."""
         result = []
         a_idx, b_idx, o_idx = 0, 0, 0
         for key in self.lora_param_keys:
             if "lora_A" in key:
                 result.append(a_params[a_idx])
                 a_idx += 1
-            elif "lora_B" in key:
+            elif "lora_B" in key or "classifier" in key or "score" in key:
                 result.append(b_params[b_idx])
                 b_idx += 1
             else:
@@ -132,6 +134,8 @@ class FedSALoRAStrategy(FedAvg):
         client_weights: List[int] = []
         client_cids: List[str] = []
 
+        fit_metrics_list: List[Tuple[int, dict]] = []
+
         for client, fit_res in results:
             ndarrays = parameters_to_ndarrays(fit_res.parameters)
             a_params, b_params, other_params = self._separate_a_b(ndarrays)
@@ -141,8 +145,9 @@ class FedSALoRAStrategy(FedAvg):
             client_other_list.append(other_params)
             client_weights.append(fit_res.num_examples)
             client_cids.append(client.cid)
+            fit_metrics_list.append((fit_res.num_examples, fit_res.metrics))
 
-        # Always aggregate "other" params (e.g., classifier head) via FedAvg
+        # Aggregate "other" params via FedAvg (if any remain after A/B/classifier separation)
         if client_other_list and client_other_list[0]:
             agg_other = self._weighted_average(client_other_list, client_weights)
         else:
@@ -182,7 +187,12 @@ class FedSALoRAStrategy(FedAvg):
         else:
             raise ValueError(f"Unknown aggregation_mode: {self.aggregation_mode}")
 
-        return ndarrays_to_parameters(combined), {}
+        # Pass through client fit metrics for aggregation (fit_metrics_aggregation_fn)
+        metrics_aggregated: Dict[str, Scalar] = {}
+        if self.fit_metrics_aggregation_fn:
+            metrics_aggregated = self.fit_metrics_aggregation_fn(fit_metrics_list)
+
+        return ndarrays_to_parameters(combined), metrics_aggregated
 
     def configure_fit(
         self,
@@ -234,3 +244,47 @@ class FedSALoRAStrategy(FedAvg):
         else:
             # FFA/Full: same parameters for all clients
             return [(client, FitIns(parameters, dict(config))) for client in clients]
+
+    def configure_evaluate(
+        self,
+        server_round: int,
+        parameters: Parameters,
+        client_manager: ClientManager,
+    ) -> List[Tuple[ClientProxy, EvaluateIns]]:
+        """Send personalized parameters to each client for evaluation."""
+        config = {}
+        if self.on_evaluate_config_fn is not None:
+            config = self.on_evaluate_config_fn(server_round)
+
+        sample_size, min_num_clients = self.num_evaluation_clients(
+            client_manager.num_available()
+        )
+        clients = client_manager.sample(
+            num_clients=sample_size, min_num_clients=min_num_clients
+        )
+
+        if self.aggregation_mode == "fedsa" and self.global_a_matrices is not None:
+            eval_ins_list = []
+            for client in clients:
+                cid = client.cid
+                if cid in self.client_b_matrices:
+                    client_b = self.client_b_matrices[cid]
+                else:
+                    client_b = self.global_b_matrices if self.global_b_matrices is not None else None
+
+                if client_b is None:
+                    eval_ins_list.append((client, EvaluateIns(parameters, dict(config))))
+                    continue
+
+                global_arrays = parameters_to_ndarrays(parameters)
+                _, _, other_params = self._separate_a_b(global_arrays)
+
+                personalized = self._reconstruct_parameters(
+                    self.global_a_matrices, client_b, other_params
+                )
+                personalized_params = ndarrays_to_parameters(personalized)
+                eval_ins_list.append((client, EvaluateIns(personalized_params, dict(config))))
+
+            return eval_ins_list
+        else:
+            return [(client, EvaluateIns(parameters, dict(config))) for client in clients]
