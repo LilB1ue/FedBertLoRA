@@ -48,6 +48,20 @@ class FlowerClient(NumPyClient):
     def fit(self, parameters, config):
         set_parameters(self.net, parameters)
 
+        current_round = config.get("current_round", 0)
+        log_timestamp = config.get("log_timestamp", "")
+
+        # Save received (post-aggregation) adapter for non-fedavg strategies
+        if self.aggregation_mode != "fedavg" and log_timestamp:
+            recv_dir = os.path.join(
+                self.log_dir, log_timestamp,
+                f"{self.task_name}_{self.aggregation_mode}",
+                "received_checkpoints",
+                f"round_{current_round}", f"client_{self.partition_id}",
+            )
+            os.makedirs(recv_dir, exist_ok=True)
+            self.net.save_pretrained(recv_dir)
+
         # Use round-level cosine annealing LR from server config
         lr = config.get("learning_rate", self.learning_rate)
 
@@ -90,9 +104,7 @@ class FlowerClient(NumPyClient):
         for k, v in eval_metrics.items():
             fit_metrics[f"eval_{k}"] = v
 
-        # Save per-client LoRA checkpoint (use server timestamp to align paths)
-        current_round = config.get("current_round", 0)
-        log_timestamp = config.get("log_timestamp", "")
+        # Save per-client LoRA checkpoint (trained, before aggregation) — all strategies
         if log_timestamp:
             ckpt_dir = os.path.join(
                 self.log_dir, log_timestamp, f"{self.task_name}_{self.aggregation_mode}", "client_checkpoints"

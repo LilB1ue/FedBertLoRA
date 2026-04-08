@@ -8,7 +8,15 @@
 |------|------|
 | [related_papers.md](papers/related_papers.md) | FL + LoRA 相關論文完整列表（含實驗設定、超參數比較表） |
 | [personalized_fl_papers.md](papers/personalized_fl_papers.md) | Personalized FL 經典論文：FedPer、FedRep、LG-FedAvg、FedBN 等 |
-| [FedALC-LoRA.md](papers/FedALC-LoRA.md) | FedALC-LoRA 方法設計筆記 |
+| [FedALC-LoRA.md](papers/FedALC-LoRA.md) | FedALC-LoRA 方法設計筆記（含與 FedADC 比較、設計決策） |
+| [FedALC-LoRA.md](papers/FedALC-LoRA.md) → 6.5 | FedADC MADC 詳細說明在 related_papers.md §2 |
+| [HiLoRA_detailed.md](papers/HiLoRA_detailed.md) | HiLoRA 方法詳解（三層 LoRA + clustering + 實驗設定 + 與 FedALC 比較） |
+
+## plans/ — 研究規劃
+
+| 文件 | 說明 |
+|------|------|
+| [research_plan.md](plans/research_plan.md) | FedALC-LoRA 三階段研究規劃（Phase 1-3） |
 
 ## implementation/ — 實作細節
 

@@ -18,12 +18,48 @@
 ### 2. FedADC: Federated Fine-Tuning on Heterogeneous Data with Alternating Device-to-Device Collaboration
 - **發表**: Computer Networks, 2026
 - **連結**: [ScienceDirect](https://doi.org/10.1016/j.comnet.2025.111931)
-- **簡介**: 兩階段交替訓練 — Stage 1: similarity clustering + freeze A + 訓練 B（個性化適應）；Stage 2: dissimilarity clustering + freeze B + 訓練 A（全域泛化）。使用 affinity propagation 聚類 + MAB/UCB 自適應排程。
+- **簡介**: 兩階段交替訓練 — Stage 1: similarity clustering + freeze A + 訓練 B（個性化適應）；Stage 2: dissimilarity clustering + freeze B + 訓練 A（全域泛化）。使用 MADC + affinity propagation 聚類 + MAB/UCB 自適應排程。
 - **實驗設定**:
-  - 模型: RoBERTa-base, DeBERTa-large
-  - GLUE（具體子任務需查全文，論文在 Elsevier paywall 後無 preprint）
+  - 模型: RoBERTa-base (125M)
+  - GLUE: SST-2, QNLI, QQP, MNLI
   - Clients: 80 devices（實體異質平台，非模擬）
-  - Non-IID: 實體環境自然異質性
+  - Non-IID: Dirichlet p∈{0.1, 0.2, 0.5, 1.0}
+  - LoRA: SST-2 r=8, 其餘 r=16; rounds=100; local epochs=1; batch=32; grad accum=4; AdamW lr=0.001 cosine
+  - Baselines: BaseFedLoRA (FedAvg), FFA-LoRA, RoLoRA
+
+#### MADC（Mean Absolute Differences of pairwise Cosine similarity）
+
+FedADC 的核心 similarity metric。標準 cosine similarity 在高維空間有兩個問題：
+1. **Concentration**：高維下 cosine 值擠在窄範圍內，區分不了不同 client
+2. **缺乏 structural awareness**：兩個 client 直接比 cosine 很像，但跟第三方的關係模式可能不同
+
+MADC 公式（Eq. 11）：
+```
+madc(n, m) = 1/(N-2) * Σ_{l ≠ n,m} |cos(n,l) - cos(m,l)|
+```
+
+做法：不直接比 n 和 m 的參數，而是比較 n 和 m 各自跟所有其他 client 的 cosine similarity profile。如果兩個 profile 很像（MADC 小），表示 n 和 m 在整個群體中的「關係模式」相似。
+
+**注意**：MADC 主要解決的是 structural awareness 問題（第 2 點）。如果底層 cosine 值本身已經 concentrate，MADC 取 concentrate 值的差，差異只會更小——並未從根本上解決高維 concentration。
+
+MADC 不是 FedADC 原創，引用自先行研究 [41,45]。
+
+#### Affinity Propagation（AP）聚類
+
+用 MADC 構建 N×N preference matrix，餵給 AP：
+- Similarity clustering: preference = -madc（MADC 小 = 更相似 → 同群）
+- Dissimilarity clustering: preference = +madc（MADC 大 = 更不同 → 同群）
+- AP 自動決定 cluster 數量和 exemplar（cluster head = 真實 device）
+- Diagonal entry（self-preference）設為 preference matrix 的 median
+
+複雜度：O(N²d_θ)（算 pairwise cosine）+ O(εN²)（AP 迭代，ε ≤ 100），簡化為 O(N²d_θ)。
+
+#### 交替訓練機制
+
+每輪包含 similarity stage + dissimilarity stage：
+- **Similarity stage**（τ_s 輪）：freeze A，只訓練 B。相似 client 群內聚合 B → 個性化適應
+- **Dissimilarity stage**（τ_d 輪）：freeze B，只訓練 A。不相似 client 群內聚合 A → 全域泛化
+- τ_s 和 τ_d 由 MAB/UCB 機制自適應調整
 
 ---
 

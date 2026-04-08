@@ -1,10 +1,10 @@
 # FedALC-LoRA: Adaptive Layer-selective Clustering for Federated Low-Rank Adaptation
 
-> 初步概念草案，待討論修訂
+> 最後更新：2026-04-06
 
 ## 一句話摘要
 
-在聯邦 LoRA 微調中，不對整個 B 矩陣做高維 clustering，而是**自適應地挑選最具判別力的 layer 作為 clustering feature**，以低維且精準的 client 分群驅動差異化聚合。
+在聯邦 LoRA 微調中，用 AP clustering 讓相似 client 的 B 矩陣群內聚合（而非完全留本地），並透過**自適應 layer selection** 挑選最具判別力的層作為 clustering feature，提升分群品質。
 
 ---
 
@@ -15,90 +15,105 @@
 | 方法 | 做法 | 問題 |
 |---|---|---|
 | FedSA-LoRA | A 聚合，B 全留本地 | B 完全不交流，miss 了相似 client 間的合作機會 |
-| FedADC | Similarity/dissimilarity clustering on gradients | Gradient 是間接 proxy，且全維度 clustering 受維度災難影響 |
-| flowertune-clustering | Flatten 所有 B → KMeans | 高維向量（RoBERTa-large: ~50K dims）分群效果差，噪音多 |
+| FedADC | MADC + AP clustering，交替 sim/dissim | MADC 解決 structural awareness，但未從根本解決高維 cosine concentration |
+| flowertune-clustering | Flatten 所有 B → KMeans | KMeans 在高維座標空間直接受 concentration 影響 |
 
-### 核心矛盾
+### 核心觀察
 
-B 矩陣包含豐富的 client-specific 資訊，**理論上是最好的 clustering signal**，但直接使用面臨：
-- **維度災難**：全部 flatten 後維度太高，距離度量失效
-- **信噪比低**：不是每一層的 B 都有判別力，淺層 B 差異小（general features），混入後稀釋信號
-- **計算開銷**：高維 clustering 的 computation + communication cost 不適合 FL 場景
+B 矩陣包含 client-specific 資訊，是 clustering 的最佳 signal。但：
+- **不是每一層的 B 都有判別力**：淺層 B 差異小（general features），混入後稀釋信號
+- **不同任務/domain 的判別力分佈不同**：某些任務靠淺層區分 client，某些靠深層
+- 直接用全部 B 做 clustering，信噪比低
 
 ---
 
 ## 2. Key Insight
 
-> **不同 layer 的 B 矩陣對 client 資料分佈的敏感度不同。**
+> **不同 layer 的 B 矩陣對 client 資料分佈的敏感度不同，且此 pattern 隨任務/domain 變化。**
 
-- 淺層 (layer 0-5)：B 矩陣跨 client 高度相似 → 學到的是 general linguistic patterns，對 client 分群無用
-- 深層 (layer 18-23)：B 矩陣跨 client 差異顯著 → 捕捉 task/domain-specific adaptation，是分群的關鍵信號
-- 同一 layer 內不同 module (query vs value) 的判別力也可能不同
-
-**因此，只需要從 B 矩陣中挑選少數幾個最具判別力的 layer，就能在極低維度下實現精準分群。**
+自適應挑選高判別力的層作為 clustering feature，比使用全部層（flowertune-clustering）或被動加權（FedADC 的 MADC）更精準。
 
 ---
 
-## 3. Method Overview
+## 2.5 設計合理性論證
 
-### 3.1 架構
+### 為什麼 A 矩陣做 global aggregation？
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    Server                            │
-│                                                     │
-│  ┌─────────────┐    ┌──────────────┐                │
-│  │  Layer       │───>│ Layer        │                │
-│  │  Score       │    │ Selector     │                │
-│  │  Analyzer    │    │ (top-K)      │                │
-│  └─────────────┘    └──────┬───────┘                │
-│         ▲                   │                        │
-│         │                   ▼                        │
-│  Per-layer B from    Selected layers                 │
-│  all clients         as clustering feature           │
-│                             │                        │
-│                      ┌──────▼───────┐                │
-│                      │  Client      │                │
-│                      │  Clustering  │                │
-│                      └──────┬───────┘                │
-│                             │                        │
-│                      ┌──────▼───────┐                │
-│                      │  Per-cluster │                │
-│                      │ B Aggregation│                │
-│                      └──────┬───────┘                │
-│                             │                        │
-│                      Global A (FedAvg for all)       │
-│                      Cluster B (FedAvg within group) │
-│                      → Personalized params per client│
-└─────────────────────────────────────────────────────┘
-```
+FedSA-LoRA (ICLR 2025) 已有理論和實驗支持：在 LoRA 中，$\mathbf{A}$ 矩陣學習的是 **general knowledge**（跨 client 共通的 input projection / feature extraction direction）。所有 client 共享 $\mathbf{A}$ 能加速收斂，因為：
 
-### 3.2 三階段流程
+$$\Delta W = \mathbf{B} \mathbf{A}$$
 
-#### Phase 1: Warm-up（Round 1 ~ T_w）
-- 跑標準 FedSA-LoRA（A 聚合，B 留本地）
-- 目的：讓 B 矩陣穩定下來，避免早期隨機性干擾 layer selection
+$\mathbf{A}$ 負責從 input space 投影到 low-rank subspace，這個 subspace 的方向對所有 client 是共通的。Global aggregation 等於讓所有 client 協作找到更好的共用 subspace。
 
-#### Phase 2: Layer Selection（Round T_w + 1）
-- Server 收集所有 client 的 per-layer B 矩陣
-- 對每個 layer 計算 **discriminability score**：
+**直接 cite FedSA-LoRA 即可，不需自己論證。**
 
-```
-score(layer_l) = mean_pairwise_distance(B_l across clients)
-              或 variance of B_l across clients
-              或 1 - mean_cosine_similarity(B_l across clients)
-```
+### 為什麼 B 矩陣做 clustering aggregation 而非完全留本地？
 
-- 選出 top-K 個 score 最高的 layer 作為 clustering feature
-- K 可以是固定值或按 threshold 自動決定
+FedSA-LoRA 的假設：B 矩陣是 **client-specific**，所以完全不聚合。但 client-specific $\neq$ client-unique：
 
-#### Phase 3: Adaptive Layer-selective Clustering（Round T_w + 1 ~ T）
-- 每輪（或每 N 輪）：
-  1. 取各 client 的 **selected layers 的 B 矩陣**，concat 成低維向量
-  2. 對低維向量做 clustering（KMeans / SphericalKMeans）
-  3. **A 矩陣**：全域 FedAvg（同 FedSA-LoRA）
-  4. **B 矩陣**：同一 cluster 內的 client 做 FedAvg，cluster 間獨立
-- Layer selection 可週期性 re-evaluate（每 M 輪重新算 score），自適應調整
+1. Non-IID (Dirichlet $\alpha$=0.5) 下，部分 client 的 label distribution 相近
+2. Label distribution 相近 → 他們的 B 適應方向也相近（因為 B 學的是從 low-rank subspace 到 output space 的 client-specific mapping）
+3. 對這些 client，完全不共享 B 浪費了合作機會——每個 client 只用自己的少量 data 訓練 B，**variance 高**
+4. 全部共享（FedAvg）又會把不相關 client 的 B 混進來，引入 **bias**
+
+**Bias-Variance 角度**：
+
+$$\mathbb{E}[\text{error}] = \underbrace{\text{bias}^2}_{\text{聚合不相關 client 的代價}} + \underbrace{\text{variance}}_{\text{data 不夠的代價}}$$
+
+| 方法 | Bias | Variance |
+|---|---|---|
+| FedAvg（全聚合 B） | 高（混了不同分佈的 client） | 低（所有 client 的 data 一起用） |
+| FedSA-LoRA（不聚合 B） | 低（只用自己的 data） | 高（單 client data 少） |
+| **FedALC-LoRA（cluster 聚合 B）** | **低**（同 cluster 內分佈相近） | **中偏低**（cluster 內多人共享） |
+
+Clustering 的效果是：在幾乎不增加 bias 的前提下顯著降低 variance。
+
+**理論支持**：Clustered FL 的收斂分析（IFCA, Ghosh et al., ICML 2020）已證明：如果 client 自然形成 $K$ 個 cluster，per-cluster aggregation 的 error bound 為 $O(\sigma^2 / n_k T) + O(\epsilon_k^2)$，其中 $n_k$ 是 cluster 內 client 數、$\epsilon_k$ 是 cluster 內 distribution 差異。我們的 AP clustering 把相近 client 分在同一群 → $\epsilon_k$ 小、$n_k$ 大 → bound tight。
+
+### 為什麼 classifier 留本地？
+
+Classifier（最後的 linear head）直接把 hidden representation 映射到 label：$\hat{y} = \text{softmax}(\mathbf{W}_{\text{cls}} \mathbf{h})$。
+
+Non-IID 下每個 client 的 label distribution $P_n(y)$ 不同 → optimal decision boundary 因人而異。聚合 classifier 等於平均不同的 decision boundary，反而更差。
+
+**文獻支持**：FedPer (Arivazhagan et al., 2019)、LG-FedAvg (Liang et al., 2020) 都有大量實驗證明：聚合 feature extractor、不聚合 classifier head 是 personalized FL 的有效策略。
+
+### 為什麼需要 Layer Selection？（Phase 3）
+
+不是所有層的 B 都包含同等品質的 clustering 信號：
+
+1. **淺層**做 general feature extraction → B 跨 client 差異小 → 混入 similarity 計算會**稀釋信號**
+2. **深層**做 task-specific adaptation → B 跨 client 差異大 → 是真正有價值的 **clustering signal**
+3. 但「哪些層有判別力」跟 task/domain 有關 → 需要 **adaptive** selection，而非固定規則
+
+**類比 Fisher's Linear Discriminant**（注意：跟 Fisher Information Matrix 是不同概念）：
+
+選高 discriminability 的層 ≈ 最大化 clustering feature 的 between-cluster variance / within-cluster variance：
+
+$$J(l) = \frac{\sigma_{\text{between}}^2(l)}{\sigma_{\text{within}}^2(l)}$$
+
+Cosine dissimilarity 是 $J(l)$ 的 proxy：dissimilarity 高 → between-cluster spread 大。
+
+---
+
+## 3. Method
+
+### 3.1 基礎版（Phase 1：無 layer selection）
+
+每輪 FL round：
+1. 各 client 完成 local training，回傳 A + B
+2. Server 收集所有 client 的 B 矩陣，flatten 後算 pairwise cosine similarity
+3. Affinity Propagation 自動分群（不需指定 K）
+4. **A 矩陣**：全域 FedAvg
+5. **B 矩陣**：同一 cluster 內 FedAvg，cluster 間獨立
+6. 為每個 client 組裝 global A + cluster B，下發
+
+### 3.2 進階版（Phase 3：加入 layer selection）
+
+在 3.1 基礎上，step 2 改為：
+1. 對每個 layer 計算 discriminability score（跨 client 的 B cosine dissimilarity）
+2. 選出 top-K 個 score 最高的 layer
+3. 只用 selected layers 的 B 做 AP clustering
 
 ### 3.3 聚合策略
 
@@ -110,211 +125,197 @@ score(layer_l) = mean_pairwise_distance(B_l across clients)
 
 ---
 
-## 4. Discriminability Score 設計（待探討）
-
-幾個候選 metric：
-
-### 4.1 Cross-client Cosine Dissimilarity（基本版）
-```python
-def layer_score(B_layer_all_clients):
-    """B_layer_all_clients: list of flattened B for one layer from all clients."""
-    sims = pairwise_cosine_similarity(B_layer_all_clients)
-    return 1 - sims.mean()  # 越不相似 → 越有判別力
-```
-
-### 4.2 Silhouette-based（若有先驗 label）
-- 如果知道 client 的大致 data distribution（例如 Dirichlet 的 label proportion），可以用 silhouette score 衡量某個 layer 的 B 是否能區分不同分佈的 client
-
-### 4.3 SVD-based Effective Rank
-- 對某 layer 的 cross-client B 矩陣做 SVD
-- Effective rank 高 → client 間變異在多個方向上都有 → 更有判別力
-- Effective rank 低 → client 間差異集中在少數方向 → 不需要那麼多維度
-
-### 4.4 Round-over-Round Stability
-- 計算某 layer 的 score 在連續幾輪間的變化
-- 穩定的 layer 更適合做 clustering feature（避免用不穩定的信號分群）
-
----
-
-## 5. 與現有方法的關係
+## 4. 與現有方法的關係
 
 ```
-FedAvg (full)
+FedAvg (full A+B aggregation)
   └── FedSA-LoRA (A 聚合, B 留本地)
-        └── FedALC-LoRA (A 聚合, B 按 layer-selective clustering 群內聚合)
+        └── FedALC-LoRA (A 聚合, B 按 clustering 群內聚合)
               │
-              ├── 退化情況 1: K=0 (不選任何 layer) → 等同 FedSA-LoRA
-              ├── 退化情況 2: K=all layers, 1 cluster → 等同 FedAvg (full)
-              └── 退化情況 3: K=all layers, N clusters → 等同 flowertune-clustering
+              ├── 退化情況 1: 每個 client 自成一群 → 等同 FedSA-LoRA
+              ├── 退化情況 2: 所有 client 同一群 → 等同 FedAvg
+              └── Layer selection 退化: K=all layers → 等同 full B clustering
 ```
 
-FedALC-LoRA 是 FedSA-LoRA 的自然推廣：FedSA-LoRA 假設所有 B 都應該留本地，FedALC-LoRA 認為**相似 client 的 B 可以合作，但 clustering 信號應該來自最有判別力的 layer，而非全部**。
+### 與 FedADC 的差異
 
----
-
-## 6. 預期優勢
-
-1. **降維**：從 ~50K 維降到 ~2K-8K 維（選 2-4 個 layer），分群品質大幅提升
-2. **自適應**：不同任務/non-IID 程度下自動挑選不同 layer，不需要人工 tune
-3. **B 矩陣合作**：比 FedSA-LoRA 多了相似 client 間的 B 知識共享
-4. **通訊開銷可控**：只需額外傳 selected layer 的 B 給 server 做 clustering（或直接用每輪回傳的完整 B）
-5. **理論退化性好**：極端情況下退化為已知方法，保底不會比 FedSA-LoRA 差
-
----
-
-## 7. 潛在風險 & 待解決問題
-
-- **Warm-up 長度 T_w**：太短 → B 還沒穩定，layer selection 被噪音主導；太長 → 浪費前期 round
-- **Layer selection 頻率**：固定一次 vs 週期性 re-evaluate？隨訓練進行，判別力分佈可能會變
-- **Clustering 數量 K_cluster**：幾群？固定？自適應？（可參考 FedADC 的 affinity propagation）
-- **額外通訊成本**：layer selection 需要 server 拿到各 client 的 per-layer B（但 FedSA-LoRA 模式下 B 本來不上傳 → 需要在 selection round 額外上傳）
-- **隱私考量**：上傳 B 矩陣是否洩漏更多資訊？（跟 FedAvg 上傳全部參數相比應該不會更差）
-
----
-
-## 8. 初步實驗計劃
-
-### Baseline
-- FedAvg (full A+B aggregation)
-- FFA-LoRA (freeze A, aggregate B)
-- FedSA-LoRA (aggregate A, B local)
-- flowertune-clustering (cluster on full B)
-
-### Ablation
-| 實驗 | 目的 |
-|---|---|
-| K = 1, 2, 4, 8, all | Layer 數量對分群品質的影響 |
-| 不同 score metric | Cosine dissim vs variance vs SVD effective rank |
-| T_w = 0, 5, 10, 20 | Warm-up 長度的影響 |
-| Re-select 頻率 | 固定 vs 每 10 輪 vs 每 20 輪 |
-| Dirichlet α = 0.1, 0.5, 1.0 | Non-IID 程度對 layer selection 的影響 |
-
-### 分析
-- 視覺化：哪些 layer 被選中？跨任務是否一致？
-- Per-layer B similarity heatmap（client × client，per layer）
-- Clustering quality: Silhouette score, NMI（若有 ground truth partition）
-- 收斂曲線 + 最終 accuracy vs baselines
-
----
-
-## 8. 設計決策記錄
-
-### 8.1 Delta B vs Raw B
-
-標準 LoRA 初始化 B = zero matrix，因此 `B_current - B_init = B_current`，兩者等價。
-
-**決定：使用 delta（B_current - B_init）作為 clustering feature。**
-
-理由：若未來使用非零初始化的 LoRA 變種（如 PiSSA），delta 才是正確的 learned signal。對標準 LoRA 無損。
-
-受影響的變種：
-- PiSSA：SVD 分解初始化，A 和 B 都非零 → 必須用 delta
-- rsLoRA：scaling 不同但 B=0 → 無差
-- VeRA：共享 frozen random A/B → 不太適用
-- LoRA+：init 同標準 LoRA（B=0）→ 無差
-
-### 8.2 Clustering 方法選擇
-
-#### 不指定 K 的方法一覽
-
-| 方法 | 原理 | 優缺點 |
+| | FedADC | FedALC-LoRA |
 |---|---|---|
-| **Affinity Propagation (AP)** | 資料點互相投票選 exemplar | FedADC 驗證過；不需 K，但對 preference 敏感，O(n²) |
-| **DBSCAN** | 密度可達性 | 不需 K，但需調 eps + min_samples，高維效果差 |
-| **HDBSCAN** | DBSCAN 層次版本 | 幾乎不需調參，但 cluster 數量不穩定 |
-| **Mean Shift** | 沿密度梯度爬升找 modes | 不需 K，但 bandwidth 要設，高維慢 |
-| **OPTICS** | 類似 DBSCAN 產出 reachability plot | 視覺化好，不需 eps |
-| **X-Means** | BIC/AIC 自動 split KMeans cluster | 給 K 上下界，自動搜索 |
-| **Silhouette scan + KMeans** | 跑 K=2..K_max，選最高分 | FedLEASE 使用；簡單穩定 |
-| **Gap Statistic + KMeans** | 跟 null reference 比較 | 理論基礎好，計算量較大 |
-| **Spectral + Eigengap** | Laplacian eigenvalue gap 自動選 K | 理論優雅，但小 N 下不穩定 |
-| **Gaussian Mixture + BIC** | 跑多個 K，選 BIC 最低 | 軟分群，給機率 |
-| **Agglomerative + 動態切割** | Dendrogram + distance threshold | 可視覺化 hierarchy |
-| **Louvain / Leiden** | Graph community detection | 不需 K，需 similarity graph |
-| **Self-Tuning Spectral** | 自動學 local scaling + eigengap | 全自動，處理不同密度 |
+| Similarity metric | MADC（二階：比較 similarity profile） | Cosine on selected layers（一階，但降噪） |
+| 處理高維方式 | MADC 繞過 structural awareness 問題 | Layer selection 從根本降維，避開 concentration |
+| Clustering 對象 | Full model update (A+B) | 只對 B 矩陣 |
+| 聚合方式 | 交替 sim/dissim stage，A 和 B 分階段 | A 永遠全域聚合，B 永遠群內聚合 |
+| 訓練方式 | 交替 freeze A/B | A 和 B 同時訓練 |
 
-#### Eigengap 說明
+---
 
-Spectral Clustering 本身需要指定 K，但可透過 **eigengap heuristic** 自動推斷：
+## 5. Discriminability Score 設計（Phase 3 Layer Selection 用）
 
-計算 graph Laplacian 的特徵值 λ₁ ≤ λ₂ ≤ ... ，找最大的 gap（λ_{k+1} - λ_k），該 k 即為最佳 cluster 數。直覺：K 個明確 cluster → K 個接近 0 的特徵值 → 之後突然跳大。
+Layer selection 的目標：從所有 LoRA 層中挑出最適合做 clustering feature 的 top-K 層。
 
-**問題**：N=40 clients 時只有 40 個特徵值，gap 的統計意義有限，不穩定。
+### 5.1 Metric A：Cross-client Cosine Dissimilarity
 
-#### 決定：Silhouette scan + KMeans (K=2..K_max)
+$$\text{score}_A(l) = 1 - \frac{1}{\binom{N}{2}} \sum_{n < m} \cos(\mathbf{B}_l^n,\; \mathbf{B}_l^m)$$
 
-理由：
-1. **N=40 夠小**：AP/DBSCAN/Louvain 在小 N 上行為不穩定，KMeans 最可靠
-2. **Layer selection 已降維**：feature 品質好，KMeans 的 cosine/歐氏距離就夠用
-3. **跨 round 穩定**：Silhouette 是 deterministic metric
-4. **可解釋性好**：方便寫論文報告分群品質
-5. **計算量極低**：K_max ≤ 10，跑幾次 KMeans 幾乎不花時間
+其中 $\mathbf{B}_l^n$ 是 client $n$ 在第 $l$ 層的 B 矩陣（flatten 成向量）。
 
-AP 作為備選可做 ablation 比較。
+**意義**：量測「這層的 B 能不能區分 client」。
+- $\text{score}_A$ 高 → client 之間在這層走了不同方向 → 適合做 clustering feature
+- $\text{score}_A$ 低 → 所有 client 的 B 方向一致 → 無判別力
 
-### 8.3 Client 數量分析
+**盲點**：某層 B 的 norm 接近 0（幾乎沒適應），值太小導致 cosine 方向隨機 → dissimilarity 虛高，實際是 noise。
 
-#### 各任務 × Client 數量的 per-client 資料量
+### 5.2 Metric B：Dissimilarity × Norm（推薦）
 
-| 任務 | 訓練集 | 20 clients | 40 clients | 50 clients | 60 clients |
-|---|---|---|---|---|---|
-| SST-2 | 67K | ~3,400 | ~1,680 | ~1,350 | ~1,120 |
-| QNLI | 105K | ~5,200 | ~2,620 | ~2,100 | ~1,750 |
-| MNLI | 393K | ~19,600 | ~9,820 | ~7,850 | ~6,550 |
-| QQP | 364K | ~18,200 | ~9,100 | ~7,270 | ~6,070 |
-| RTE | 2.5K | ~125 | ~62 ❌ | ~50 ❌ | ~42 ❌ |
+$$\text{score}_B(l) = \left(1 - \frac{1}{\binom{N}{2}} \sum_{n < m} \cos(\mathbf{B}_l^n,\; \mathbf{B}_l^m)\right) \times \frac{1}{N} \sum_{n=1}^{N} \|\mathbf{B}_l^n\|_F$$
 
-#### 決定：預設 40 clients
+在 Metric A 基礎上乘以該層 B 的平均 Frobenius norm。
 
-- Clustering 需要每群有足夠 client（K=4 時每群 ~10 人），20 太少
-- 40 clients 時 SST-2 每人 ~1,680 筆，仍然充裕
-- 比 FedSA-LoRA 的 3 clients 更接近真實場景
-- Ablation 可跑 20 / 60 做對照
-- **RTE 排除或降到 10 clients**（資料量不足）
+**意義**：結合「判別力」和「適應幅度」。
+- $\|\mathbf{B}_l^n\|_F$ 大 → 這層 LoRA 學到很多東西（B 從 0 離開得遠）
+- $\|\mathbf{B}_l^n\|_F$ 小 → 這層幾乎沒動，即使 cosine dissimilarity 高也是 noise
+- 兩者相乘 → 只有「學了很多且方向不同」的層才會得高分
 
-### 8.4 Personalized FL 評估策略
+**優勢**：不需要 gradient，server 端每輪已經拿到所有 client 的 B 矩陣，零額外成本。
 
-**評估方式**：每個 client 在自己的 local test split（80/20 的 20%）上評估。這是 personalized FL 的標準 protocol（PF2LoRA、FedDPA 皆如此）。
+### 5.3 Metric C：Fisher-weighted Dissimilarity（備選）
 
-**Label 數少（2-3）的說服力問題**：
+$$\text{score}_C(l) = \left(1 - \frac{1}{\binom{N}{2}} \sum_{n < m} \cos(\mathbf{B}_l^n,\; \mathbf{B}_l^m)\right) \times \text{FIM}(l)$$
 
-二分類任務下 Dirichlet non-IID 的主要變異是 label ratio，reviewer 可能質疑 per-client 提升只是 overfitting 到 local label distribution。
+$$\text{FIM}(l) = \frac{1}{|D_{\text{proxy}}|} \sum_{d \in D_{\text{proxy}}} \|\nabla_{\theta_l} \ell(\theta, d)\|_2^2$$
 
-**對策**：
-1. 報告 per-client accuracy 的 **mean ± std**，不只 mean
-2. 同時報告 **global test set accuracy**，說明 personalization 不犧牲全域表現
-3. 加入 **MNLI（3 classes）** 作為 label 較多的 case
-4. 分析 **worst-client performance** — personalization 的價值在拉高尾部 client
-5. 分析 per-client accuracy **按 label ratio 分組**，區分是 personalization 還是 distribution match
+用 Fisher Information Matrix score 取代 norm 作為 importance weight。
 
-**核心比較對象**：FedALC-LoRA 應與其他 personalized FL 方法做 apple-to-apple 比較，而非僅與 global model 比。「personalized > global」太容易達成，真正有意義的是「FedALC-LoRA > 其他 personalization baselines」。
+**意義**：Fisher 量測「微調這層參數對 loss 的影響有多大」，比 norm 更直接反映 task-level 重要性。
+- FIM 高 → 這層對 task performance 很敏感 → 重要
+- FIM 低 → 改了也不影響 loss → 不重要
 
-### 8.5 Personalized FL Baselines
+**實作方式**（參考 Fed-HeLLo, IEEE TNNLS 2025）：
+- Server 端用 global model 在 proxy dataset（eval set 取樣）上跑 forward + backward
+- 對每層算 gradient 的 L2 norm² → 即為 FIM score
+- 不需要 client 額外上傳任何東西
+- 現有 `server_app.py` 的 `evaluate_fn` 已有 global model + eval dataset，只需移除 `torch.no_grad()` 改為算 gradient norm
 
-以下為應比較的 personalized federated learning 方法，按相關性排序：
+**與 Metric B 的差異**：
+- $\|\mathbf{B}\|_F$（Metric B）量測的是「適應幅度」— 這層 B 離初始值多遠
+- $\text{FIM}$（Metric C）量測的是「敏感度」— 動這層的參數，loss 變多少
+- 理論上 FIM 更精準，但需要額外的 backward pass；Metric B 完全免費
 
-#### 直接可比（LoRA-based Personalized FL）
+### 5.4 三個 Metric 的比較
 
-| 方法 | 論文全稱 | 發表 | Personalization 機制 | 備註 |
-|---|---|---|---|---|
-| **FedSA-LoRA** | FedSA-LoRA: Selective Aggregation for Low-Rank Adaptation in Federated Learning | ICLR 2025 | B 矩陣留本地（implicit personalization） | 最直接 baseline：FedALC-LoRA 是其推廣 |
-| **PF2LoRA** | Personalized Federated Fine-Tuning via Two-Level LoRA | arXiv 2025 | 兩層 LoRA：global {A,B} + local {C_k,D_k} | 明確的 personalization 方法，有 GLUE 實驗 |
-| **FedDPA** | Dual-Personalizing Adapter for Federated Foundation Models | NeurIPS 2024 | 兩套完整 LoRA (global+local) + instance-wise 動態加權 | 強 baseline，但原論文用 LLaMA-7B 非 RoBERTa |
-| **HiLoRA** | Hierarchical LoRA for Personalized Federated Learning | arXiv 2025 | 三層 hierarchy (global→cluster→client) | 最接近 FedALC-LoRA 的 clustering personalization |
+| | Metric A | Metric B | Metric C |
+|---|---|---|---|
+| 公式 | dissimilarity | dissimilarity × norm | dissimilarity × Fisher |
+| 量測 | 判別力 | 判別力 + 適應幅度 | 判別力 + task 重要性 |
+| 計算成本 | 零（已有 B） | 零（已有 B） | 每 $T$ 輪一次 backward pass |
+| Noise robustness | 低（norm≈0 時虛高） | 高 | 高 |
+| 適合 | 快速 baseline | **推薦預設** | Ablation / 精細分析 |
 
-#### 輔助比較（Non-personalized baselines）
+### 5.5 實作位置
 
-| 方法 | 論文全稱 | 發表 | 聚合方式 | 備註 |
-|---|---|---|---|---|
-| **FedAvg (full)** | — | — | A+B 全部 FedAvg | 最基本 baseline |
-| **FFA-LoRA** | FFA-LoRA: Federated Freeze-A LoRA | ICLR 2024 | Freeze A，只聚合 B | FedSA-LoRA 的反向操作 |
-| **FedADC** | Federated Fine-Tuning on Heterogeneous Data with Alternating Device-to-Device Collaboration | Computer Networks 2026 | 交替 similarity/dissimilarity clustering + A/B 分離 | Clustering 方法（AP），但非 personalization 導向 |
-| **FedLEASE** | Adaptive LoRA Experts Allocation and Selection | NeurIPS 2025 | LoRA-B similarity clustering + silhouette 選 K | Clustering 相關，但跨任務設定 |
+Phase 3 在 `fedalc_strategy.py` 的 `aggregate_fit` 中實作：
 
-#### 比較要點
+```python
+def _compute_layer_scores(self, client_b_list, method="dissim_norm"):
+    """Compute per-layer discriminability scores.
 
-- FedALC-LoRA vs **FedSA-LoRA**：B 群內共享 vs B 完全本地 → 證明 clustering 帶來合作收益
-- FedALC-LoRA vs **PF2LoRA**：layer-selective clustering vs 兩層 LoRA → 不同 personalization paradigm
-- FedALC-LoRA vs **FedDPA**：clustering-based vs instance-wise 加權 → 結構性 vs 動態 personalization
-- FedALC-LoRA vs **HiLoRA**：layer-selective clustering vs hierarchical clustering → 最直接的方法論競爭
-- FedALC-LoRA vs **FedAvg/FFA-LoRA**：personalized vs global → 證明 personalization 有效（必要但不充分）
+    Args:
+        client_b_list: List[List[np.ndarray]], each inner list is one client's B matrices.
+        method: "dissim" (Metric A), "dissim_norm" (Metric B), "dissim_fisher" (Metric C).
+
+    Returns:
+        scores: List[float], one score per layer.
+    """
+    n_layers = len(client_b_list[0])
+    scores = []
+    for l in range(n_layers):
+        # Collect layer l's B from all clients, flatten
+        vecs = np.stack([c[l].flatten() for c in client_b_list])  # (N, d_l)
+
+        # Cosine dissimilarity
+        sim_matrix = cosine_similarity(vecs)
+        dissim = 1.0 - sim_matrix.mean()
+
+        if method == "dissim":
+            scores.append(dissim)
+        elif method == "dissim_norm":
+            avg_norm = np.mean([np.linalg.norm(c[l]) for c in client_b_list])
+            scores.append(dissim * avg_norm)
+        # dissim_fisher: requires FIM scores computed separately
+    return scores
+```
+
+---
+
+## 6. 設計決策記錄
+
+### 6.1 Clustering 演算法：Affinity Propagation
+
+- 自動決定 K，不需人為指定
+- FedADC 已在 FL 場景驗證 AP 可行
+- N=30 下 O(N²) 完全無負擔
+- 備選：Silhouette scan + KMeans（ablation 比較用）
+
+### 6.2 Client 數量：30
+
+- 現有 baseline（FedAvg、FedSA-LoRA）都在 30 clients 上跑
+- 改數量需重跑所有 baseline，Phase 1 先避免
+- Ablation 可跑 20 / 50 做對照
+
+### 6.3 不使用 Warm-up
+
+- 減少超參數
+- 先驗證無 warm-up 是否足夠
+- 如果效果不好再考慮加入
+
+### 6.4 Delta B vs Raw B
+
+標準 LoRA 初始化 B = zero matrix，`B_current - B_init = B_current`，兩者等價。
+使用 delta 以相容 PiSSA 等非零初始化變種。
+
+### 6.5 Similarity Metric：Cosine（非 MADC）
+
+Phase 1 先用最簡單的 cosine similarity on full B。理由：
+- 先驗證基礎機制（clustering B 是否有效）
+- MADC 可作為 ablation baseline
+- Phase 3 的 layer selection 是我們對高維問題的解法，不需依賴 MADC
+
+---
+
+## 7. 預期優勢
+
+1. **B 矩陣合作**：比 FedSA-LoRA 多了相似 client 間的 B 知識共享
+2. **自動分群**：AP 不需指定 K，自適應 non-IID 程度
+3. **Layer selection 降噪**：只用高判別力的層，比全維度 clustering 更精準
+4. **可解釋性**：哪些層被選中 → 分析 client heterogeneity 在模型中的位置
+5. **退化性好**：極端情況退化為 FedSA-LoRA 或 FedAvg
+
+---
+
+## 8. 潛在風險
+
+- **Clustering B 是否真的比 local B 好？** → Phase 1 直接驗證
+- **GLUE 任務間差異太小**，layer selection 的 cross-task pattern 可能不明顯 → Phase 3 換 testbed
+- **AP 的 preference 參數**會影響群數，需要調整策略
+- **每輪都做 clustering 的開銷**：N=30 下可忽略，但 client 多時需考慮週期性 clustering
+
+---
+
+## 9. Baselines
+
+### 直接比較
+
+| 方法 | A | B | Clustering |
+|---|---|---|---|
+| FedAvg | global avg | global avg | 無 |
+| FedSA-LoRA | global avg | local | 無 |
+| FFA-LoRA | freeze | global avg | 無 |
+| **FedALC-LoRA** | global avg | **cluster avg** | **AP** |
+
+### Personalization baselines（Phase 3）
+
+| 方法 | 機制 |
+|---|---|
+| PF2LoRA | 兩層 LoRA (global + local) |
+| FedDPA | 兩套 LoRA + instance-wise 加權 |
+| HiLoRA | 三層 hierarchy (global → cluster → client) |

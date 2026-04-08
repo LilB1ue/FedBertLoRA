@@ -1,0 +1,130 @@
+# FedALC-LoRA 研究規劃
+
+> 最後更新：2026-04-06
+
+## 方法概述
+
+**FedALC-LoRA**（Adaptive Layer-selective Clustering for LoRA）：
+- A 矩陣：global FedAvg（同 FedSA-LoRA）
+- B 矩陣：AP clustering → 群內 FedAvg（介於 FedSA-LoRA 的「完全不聚合」和 FedAvg 的「全部聚合」之間）
+- Layer selection：自適應挑選高判別力的層作為 clustering feature（Phase 3 引入）
+
+---
+
+## Phase 1：GLUE 上驗證基礎機制
+
+**目標：** 證明「clustering B > local B（FedSA-LoRA）」
+
+### 實作
+- AP clustering on full B → 群內 FedAvg B → global FedAvg A
+- 不需 warm-up，每輪都做 clustering
+- AP 自動決定 cluster 數量（不需指定 K）
+
+### 實驗設定
+- 任務：SST-2 / QNLI / MNLI / QQP
+- 模型：RoBERTa-large + LoRA r=8
+- Clients：30，Dirichlet α=0.5
+- Rounds：20 + 50
+
+### 比較方法
+
+| 方法 | A | B |
+|---|---|---|
+| FedAvg | global avg | global avg |
+| FedSA-LoRA | global avg | local（不聚合） |
+| **FedALC-LoRA v1** | global avg | **cluster avg (AP)** |
+
+### 報告指標
+- Accuracy：mean ± std across clients
+- AP 自動決定的 cluster 數量
+- Silhouette score（分群品質）
+- 收斂曲線（accuracy + server loss vs round）
+
+### 回答的問題
+B 矩陣在相似 client 間合作，到底比完全留本地好不好？
+
+---
+
+## Phase 2：Non-IID 程度分析（GLUE 延伸）
+
+**目標：** 證明 clustering 的收益跟 heterogeneity 程度有關
+
+### 實驗
+- α = 0.1（嚴重 non-IID）/ 0.5（中等）/ 1.0（輕微）
+- 同樣跑 FedAvg / FedSA-LoRA / FedALC-LoRA v1
+- 任務可只選 SST-2 + MNLI（一大一小、一 binary 一 3-class）
+
+### 預期 Finding
+- α=1.0（近 IID）：三者差不多
+- α=0.5：clustering B 勝出
+- α=0.1：可能 local B 反而好（太 heterogeneous，合作是噪音）
+
+### 回答的問題
+B 的最佳聚合粒度取決於 heterogeneity 程度，adaptive clustering 能自動找到合適粒度。
+
+---
+
+## Phase 3：Layer Selection（換 testbed）
+
+**目標：** 證明不同任務/domain 的 discriminative layers 不同，adaptive layer selection 有價值
+
+### 前提
+Phase 1 的 pipeline 已跑通，基礎機制已驗證。
+
+### 候選 Testbed（擇一或兩個）
+
+| Testbed | 模型 | 任務差異來源 |
+|---|---|---|
+| Instruction tuning | LLaMA / Mistral | 不同 instruction 類型（QA / summarization / math） |
+| ViT | ViT-base/large | 不同影像 domain（CIFAR / medical / satellite） |
+
+### 實作
+1. Per-layer discriminability score（三個 metric，見 `notes/papers/FedALC-LoRA.md` §5）：
+   - **Metric A**：$1 - \text{mean}(\cos)$ — 純 dissimilarity
+   - **Metric B**（推薦）：dissimilarity $\times$ $\|\mathbf{B}\|_F$ — 加入適應幅度，過濾 noise
+   - **Metric C**（備選）：dissimilarity $\times$ FIM — 加入 Fisher 重要性（需 backward pass）
+2. Layer selection（top-K）→ 只用 selected layers 的 B 做 AP clustering
+3. 跟 Phase 1 的 full B clustering 比較
+
+### 報告
+- Heatmap：layer × task 的 discriminability score（三個 metric 各一張）
+- 不同任務選到不同層的視覺化證據
+- Layer selection vs full B 的 silhouette score + accuracy
+- Ablation：K = 1, 2, 4, 8, all
+- Ablation：Metric A vs B vs C 的分群品質比較
+
+### 回答的問題
+哪些層的 B 對 client 分群有判別力？這個 pattern 是否隨任務/domain 變化？
+
+---
+
+## Paper 結構
+
+| Section | 內容 | 資料來源 |
+|---|---|---|
+| Introduction | B 矩陣聚合粒度問題 + layer 判別力假說 | — |
+| Related Work | FedSA-LoRA, FedADC (MADC+AP), FFA-LoRA, clustering FL | notes/papers/ |
+| Method | AP clustering B + adaptive layer selection | — |
+| Exp 1: GLUE | clustering B vs local B vs global avg | Phase 1 |
+| Exp 2: non-IID | α 對 clustering 收益的影響 | Phase 2 |
+| Exp 3: cross-domain | layer selection 在異質任務上的效果 | Phase 3 |
+| Analysis | per-layer discriminability heatmap + 可解釋性 | Phase 3 |
+
+## Contributions
+
+1. 提出 B 矩陣的 clustering aggregation，介於 FedAvg（全聚合）和 FedSA-LoRA（不聚合）之間
+2. 發現 discriminative layers 隨任務/domain 不同，提出 adaptive layer selection
+3. Empirical analysis：B 矩陣在哪些層、什麼 heterogeneity 程度下值得合作
+
+---
+
+## 設計決策記錄
+
+| 決策 | 選擇 | 理由 |
+|---|---|---|
+| Clustering 演算法 | Affinity Propagation | 自動決定 K；FedADC 已驗證可行；N=30 下 O(N²) 無負擔 |
+| Similarity metric | Cosine similarity on B（Phase 1）；Layer-selected B（Phase 3） | 先用最簡單版本驗證，再引入 layer selection |
+| Client 數量 | 30 | 現有 baseline（FedAvg、FedSA-LoRA）都在 30 clients 上跑，避免重跑 |
+| Warm-up | 不使用 | 減少超參數，先驗證無 warm-up 的效果 |
+| Delta B vs Raw B | Delta（B_current - B_init） | 標準 LoRA 下 B_init=0 兩者等價，但相容 PiSSA 等非零初始化變種 |
+| GLUE 上的 layer selection | 不報告 cross-task 差異 | GLUE 任務間差異太小，layer pattern 可能相似；留給異質 testbed |

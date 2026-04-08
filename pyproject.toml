@@ -61,7 +61,7 @@ logging-steps = 10
 log-dir = "logs"
 log-timestamp = ""
 
-# Strategy: "fedavg" | "fedsa" | "ffa"
+# Strategy: "fedavg" | "fedsa" | "ffa" | "fedalc"
 aggregation-mode = "fedsa"
 
 # Wandb (FL client logging)

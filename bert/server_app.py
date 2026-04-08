@@ -14,6 +14,7 @@ from bert.dataset import get_num_labels, load_centralized_data
 from bert.models import cosine_annealing, get_model, get_parameters, get_parameter_keys, set_parameters, set_seed
 from bert.strategy import FedAvgStrategy
 from bert.fedsa_strategy import FedSALoRAStrategy
+from bert.fedalc_strategy import FedALCStrategy
 
 
 def get_metrics_aggregation_fn(log_path, phase, use_wandb=False):
@@ -94,7 +95,8 @@ def _eval_on_loader(net, testloader, device, task_name):
 
 def get_evaluate_fn(model_name, task_name, num_labels, lora_r, lora_alpha,
                     target_modules, max_seq_length, batch_size, lora_dropout=0.1,
-                    server_log_path=None, use_wandb=False, checkpoint_dir=None):
+                    server_log_path=None, use_wandb=False, checkpoint_dir=None,
+                    aggregation_mode="fedavg"):
     """Return a server-side evaluation function."""
     # Pre-load eval data once
     _, eval_dataset, _, data_collator = load_centralized_data(
@@ -148,8 +150,8 @@ def get_evaluate_fn(model_name, task_name, num_labels, lora_r, lora_alpha,
                 metrics[f"{k}_mm"] = v
                 log_msg += f", {k}_mm={v:.4f}"
 
-        # Save global LoRA checkpoint
-        if checkpoint_dir:
+        # Save global LoRA checkpoint (only for fedavg — others have per-client checkpoints)
+        if checkpoint_dir and aggregation_mode == "fedavg":
             save_path = os.path.join(checkpoint_dir, f"round_{server_round}")
             os.makedirs(save_path, exist_ok=True)
             net.save_pretrained(save_path)
@@ -291,6 +293,7 @@ def server_fn(context: Context):
         server_log_path=server_log_path,
         use_wandb=wandb_enabled,
         checkpoint_dir=global_ckpt_dir,
+        aggregation_mode=aggregation_mode,
     )
 
     # Metrics aggregation functions (log per-client metrics to TSV + optional wandb)
@@ -298,27 +301,30 @@ def server_fn(context: Context):
     eval_metrics_agg = get_metrics_aggregation_fn(eval_log_path, "evaluate", use_wandb=wandb_enabled)
 
     # Create strategy based on aggregation mode
+    common_kwargs = dict(
+        fraction_fit=fraction_fit,
+        fraction_evaluate=1.0,
+        initial_parameters=initial_parameters,
+        evaluate_fn=evaluate_fn,
+        on_fit_config_fn=fit_config,
+        fit_metrics_aggregation_fn=fit_metrics_agg,
+        evaluate_metrics_aggregation_fn=eval_metrics_agg,
+    )
+
     if aggregation_mode == "fedavg":
-        strategy = FedAvgStrategy(
-            fraction_fit=fraction_fit,
-            fraction_evaluate=1.0,
-            initial_parameters=initial_parameters,
-            evaluate_fn=evaluate_fn,
-            on_fit_config_fn=fit_config,
-            fit_metrics_aggregation_fn=fit_metrics_agg,
-            evaluate_metrics_aggregation_fn=eval_metrics_agg,
+        strategy = FedAvgStrategy(**common_kwargs)
+    elif aggregation_mode == "fedalc":
+        strategy = FedALCStrategy(
+            lora_param_keys=lora_param_keys,
+            use_wandb=wandb_enabled,
+            log_dir=log_subdir,
+            **common_kwargs,
         )
     else:
         strategy = FedSALoRAStrategy(
             aggregation_mode=aggregation_mode,
             lora_param_keys=lora_param_keys,
-            fraction_fit=fraction_fit,
-            fraction_evaluate=1.0,
-            initial_parameters=initial_parameters,
-            evaluate_fn=evaluate_fn,
-            on_fit_config_fn=fit_config,
-            fit_metrics_aggregation_fn=fit_metrics_agg,
-            evaluate_metrics_aggregation_fn=eval_metrics_agg,
+            **common_kwargs,
         )
 
     config = ServerConfig(num_rounds=num_rounds)
