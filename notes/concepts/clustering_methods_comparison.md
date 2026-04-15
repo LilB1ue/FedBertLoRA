@@ -7,6 +7,7 @@
 | 方法 | Clustering 演算法 | 選 K 方式 | Similarity metric | Clustering 對象 | 需要 exemplar？ |
 |---|---|---|---|---|---|
 | **FedALC-LoRA (ours)** | Affinity Propagation | AP 自動 | Cosine similarity on full B | B 矩陣 only | 不需要（只用 labels） |
+| **FL-TAC** | KMeans | K=task 數（已知） | Euclidean on full adapter (A+B) | Full adapter | 不需要 |
 | **FedADC** | Affinity Propagation | AP 自動 | MADC（二階 cosine profile） | Full model update (A+B) | 是（exemplar 做 intra-cluster agg） |
 | **FedLEASE** | Agglomerative Hierarchical | Silhouette scan K=2..K_max | Per-layer averaged cosine distance on B | B 矩陣 only | 不需要 |
 | **HiLoRA** | Spectral Clustering | Eigengap heuristic | SVD + principal angles on B | B 矩陣 only | 不需要 |

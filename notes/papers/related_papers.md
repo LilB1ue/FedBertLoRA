@@ -168,6 +168,8 @@ MADC 不是 FedADC 原創，引用自先行研究 [41,45]。
 ### 11. FedLEASE: Adaptive LoRA Experts Allocation and Selection
 - **發表**: NeurIPS 2025
 - **連結**: [arXiv](https://arxiv.org/abs/2509.15087)
+- **PDF**: `papers/fedlease.pdf`
+- **Source code**: 無（截至 2026-04）
 - **簡介**: 把多個 LoRA 當作 "experts"，每個 cluster 訓練一個專屬 LoRA expert。用 LoRA-B cosine similarity 做 client clustering，silhouette 分析掃 K=2..K_max 找最佳 cluster 數。推論時 client 透過 adaptive top-M MoE（Mixture of Experts）機制選擇性混合多個 experts。
 
 #### 方法細節
@@ -196,7 +198,15 @@ B_j^expert = avg(B_i for i ∈ C_j)
 - 取 top-M scores → 保證 assigned expert 一定參與，同時允許混合其他 experts
 - Forward: y = W_0 x + Σ ω̂_i · B_j A_j x，ω̂ = softmax(Gx)
 
-**聚合**: 只在 cluster 內聚合 assigned expert，其他 expert 保持 frozen
+**聚合**: 只在 cluster 內聚合 assigned expert + router，其他 expert 保持 frozen
+
+**Router 聚合**：群內 FedAvg（clients in same cluster share router via averaging），優於 per-client individual router。
+
+**Clustering 時機**：**只做一次**（初始化訓練 E epochs 後），不是每輪。計算量 ~3.11s（可忽略）。
+
+**Client 每輪訓練**：只訓練 assigned expert (A_j, B_j) + router G_i，其他 expert frozen。
+
+**未公開細節**：初始化訓練的 epoch 數 E 未明確；router 初始化方式未說明。
 
 **Key Finding — Expert Selection vs Layer Depth**:
 - 深層 activate 更多 experts
@@ -270,12 +280,47 @@ Silhouette 最佳 K=4（恰好 4 個任務），heatmap 顯示 block-diagonal。
   - 資料集: CIFAR-100（NLP 結果不確定）
 
 ### 14. FL-TAC: Task-Specific Adapter Clustering for Federated Learning
-- **發表**: arXiv 2024
+- **發表**: ICLR 2024
 - **連結**: [arXiv](https://arxiv.org/abs/2404.15384)
-- **簡介**: Server-side adapter clustering on GLUE。Task-aware clustering。報告 QNLI +11.7 pts, QQP +29.7 pts。
-- **實驗設定**:
-  - GLUE + CIFAR-10/100
-  - 跨任務 clustering（非單任務內 non-IID clustering）
+- **PDF**: `papers/fl-tac.pdf`
+- **簡介**: 每個 client 為每個 local task 訓練獨立的低 rank LoRA adapter，server 端用 KMeans 按 task 分群聚合。
+
+#### 方法細節
+
+- **每 client 多個 adapter**：client 有 $n_i$ 個 task → 訓練 $n_i$ 個獨立 LoRA adapter（每個 rank 很低，例如 rank=1）
+- **Clustering**：KMeans on full adapter（A+B flatten），K = task 數量（已知）
+- **A/B 分離**：不分離，整個 adapter 作為一個 unit
+- **聚合**：cluster 內 unweighted average
+- **核心 insight**：低 rank 下，per-task adapter 的 approximation error 比 shared adapter 低
+- **無 MoE**：client 收到自己 task 對應的 cluster adapter
+
+#### 實驗設定
+
+| | NLG | NLU | CV |
+|---|---|---|---|
+| Model | LLaMA-7B | BERT-base | ViT-ImageNet21k |
+| Tasks | Dolly-15k (8 tasks) | GLUE (SST-2, MRPC, QQP, QNLI, RTE) | CIFAR-10/100 |
+| Clients | 10 | 10 | 10 |
+| Non-IID | Dirichlet α=0.5 | Dirichlet α=0.5 | Dirichlet α=0.5 |
+| LoRA rank | 1 (per task) | 低 rank | 低 rank |
+
+#### 主要結果
+
+| Method | SST-2 | QQP | QNLI | MRPC | RTE |
+|---|---|---|---|---|---|
+| FedIT | 0.652 | 0.510 | 0.670 | 0.520 | 0.524 |
+| **FL-TAC** | **0.874** | **0.807** | **0.787** | **0.673** | **0.532** |
+
+#### 與 FedALC-LoRA 的差異
+
+| | FL-TAC | FedALC-LoRA |
+|---|---|---|
+| Client adapter 數量 | 多個（每 task 一個） | 1 個 |
+| Clustering 對象 | Full adapter (A+B) | B only |
+| A/B 分離 | 不分 | A global, B cluster |
+| K 的決定 | 已知（= task 數） | AP 自動 |
+| 場景 | Multi-task（每 client 多 task） | Single/Multi-task（每 client 一 task） |
+| **注意** | 跟 FedALC 場景不同：FL-TAC 的每 client 有多個 task，FedALC 的每 client 只做一個 task | |
 
 ### 15. Federated Low-Rank Adaptation for Foundation Models: A Survey
 - **發表**: IJCAI 2025
