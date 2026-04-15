@@ -213,8 +213,11 @@ def server_fn(context: Context):
     # Init wandb (single run on server side)
     if wandb_enabled:
         import wandb
+        import socket
         ts = datetime.now().strftime("%m%d_%H%M")
-        run_name = f"{task_name}_{aggregation_mode}_c{num_clients}_r{num_rounds}_{ts}"
+        host = socket.gethostname()
+        alpha = float(cfg.get("dirichlet-alpha", 0.5))
+        run_name = f"{task_name}_{aggregation_mode}_c{num_clients}_r{num_rounds}_a{alpha}_{host}_{ts}"
         wandb.init(
             project=wandb_project,
             name=run_name,

@@ -1,6 +1,6 @@
 # 文件索引
 
-所有筆記整理在 `` 資料夾下，按主題分類。
+所有筆記整理在 `notes/` 資料夾下，按主題分類。
 
 ## papers/ — 論文整理
 
@@ -8,15 +8,15 @@
 |------|------|
 | [related_papers.md](papers/related_papers.md) | FL + LoRA 相關論文完整列表（含實驗設定、超參數比較表） |
 | [personalized_fl_papers.md](papers/personalized_fl_papers.md) | Personalized FL 經典論文：FedPer、FedRep、LG-FedAvg、FedBN 等 |
-| [FedALC-LoRA.md](papers/FedALC-LoRA.md) | FedALC-LoRA 方法設計筆記（含與 FedADC 比較、設計決策） |
-| [FedALC-LoRA.md](papers/FedALC-LoRA.md) → 6.5 | FedADC MADC 詳細說明在 related_papers.md §2 |
-| [HiLoRA_detailed.md](papers/HiLoRA_detailed.md) | HiLoRA 方法詳解（三層 LoRA + clustering + 實驗設定 + 與 FedALC 比較） |
+| [FedALC-LoRA.md](papers/FedALC-LoRA.md) | FedALC-LoRA 方法設計（含 FedADC/FedLEASE/HiLoRA 比較、layer selection motivation、Phase 1 結果） |
+| [HiLoRA_detailed.md](papers/HiLoRA_detailed.md) | HiLoRA 方法詳解（三層 LoRA + clustering + 實驗設定） |
 
 ## plans/ — 研究規劃
 
 | 文件 | 說明 |
 |------|------|
 | [research_plan.md](plans/research_plan.md) | FedALC-LoRA 三階段研究規劃（Phase 1-3） |
+| [next_steps.md](plans/next_steps.md) | 下一步行動計劃（Step 1-5，含決策分支） |
 
 ## implementation/ — 實作細節
 
@@ -32,6 +32,7 @@
 |------|------|
 | [lora_vs_full_finetuning.md](concepts/lora_vs_full_finetuning.md) | LoRA vs 全參數微調架構圖解、classifier/logits 位置、參數數量對比 |
 | [why_local_classifier.md](concepts/why_local_classifier.md) | 為什麼 classifier 要留本地不聚合（gradient 分析、經典論文） |
+| [clustering_methods_comparison.md](concepts/clustering_methods_comparison.md) | Related work 的 clustering 方法比較（AP/Agglomerative/Spectral + similarity metric） |
 
 ## experiments/ — 實驗數據
 

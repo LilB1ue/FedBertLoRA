@@ -42,7 +42,9 @@ python centralized_learning/train.py --task qnli --epochs 10 --wandb
 # 批次跑（含 wandb）
 bash run_fedavg_all.sh              # FedAvg 全任務
 bash run_fedsa_all.sh               # FedSA-LoRA 全任務
-bash run_fedalc_all.sh              # FedALC-LoRA (SST-2 + QNLI, 30 rounds)
+bash run_fedalc_all.sh              # FedALC-LoRA α=0.5 (SST-2 + QNLI, 30 rounds)
+bash run_fedalc_alpha03.sh          # FedALC-LoRA α=0.3
+bash run_baseline_alpha03.sh        # FedAvg + FedSA α=0.3 baselines
 ```
 
 ### 快速切換實驗設定 (修改 pyproject.toml)
@@ -56,7 +58,8 @@ task-name = "sst2"           # "sst2" | "qnli" | "mnli" | "qqp" | "rte"
 lora-r = 8                   # 全部任務統一 r=8
 
 # 切換 non-IID 程度
-dirichlet-alpha = 0.5        # 0.1(嚴重) / 0.5(中等) / 1.0(輕微)
+dirichlet-alpha = 0.5        # 0.3(較強) / 0.5(中等) / 1.0(輕微)
+# 注意: α=0.1 在 30 clients + binary task 下 DirichletPartitioner 分割失敗
 ```
 
 ## 架構
@@ -76,7 +79,9 @@ centralized_learning/
 └── run_all.sh         # 批次跑全部 GLUE 任務 + log 存檔
 run_fedavg_all.sh      # FedAvg 全任務批次跑
 run_fedsa_all.sh       # FedSA-LoRA 全任務批次跑
-run_fedalc_all.sh      # FedALC-LoRA 批次跑 (SST-2 + QNLI)
+run_fedalc_all.sh      # FedALC-LoRA α=0.5 批次跑 (SST-2 + QNLI)
+run_fedalc_alpha03.sh  # FedALC-LoRA α=0.3
+run_baseline_alpha03.sh # FedAvg + FedSA α=0.3 baselines
 papers/                # 相關論文 PDF
 notes/                 # 筆記（方法設計、實驗結果、論文整理、研究規劃）
 plots/                 # 實驗圖表（按 r{rounds}_c{clients}/ 子目錄分類）

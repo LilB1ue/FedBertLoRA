@@ -168,12 +168,90 @@ MADC 不是 FedADC 原創，引用自先行研究 [41,45]。
 ### 11. FedLEASE: Adaptive LoRA Experts Allocation and Selection
 - **發表**: NeurIPS 2025
 - **連結**: [arXiv](https://arxiv.org/abs/2509.15087)
-- **簡介**: 用 LoRA-B cosine similarity 進行 client clustering，silhouette 分析找最佳 K。實驗中 16 clients × 4 GLUE 任務 → 最佳 K=4（反映任務差異，非 label 差異）。B 矩陣 similarity heatmap 顯示 block-diagonal structure。
-- **與 B 矩陣 clustering 分析直接相關**
-- **實驗設定**:
-  - 模型: 需確認
-  - GLUE 子任務: 4 個任務（跨任務 clustering，非單任務內 non-IID）
-  - Clients: 16（每任務 4 個）
+- **簡介**: 把多個 LoRA 當作 "experts"，每個 cluster 訓練一個專屬 LoRA expert。用 LoRA-B cosine similarity 做 client clustering，silhouette 分析掃 K=2..K_max 找最佳 cluster 數。推論時 client 透過 adaptive top-M MoE（Mixture of Experts）機制選擇性混合多個 experts。
+
+#### 方法細節
+
+**Clustering Metric（per-layer averaged cosine distance）**:
+```
+d(i,j) = (1/|L|) Σ_l (1 - cos(B_i^l, B_j^l))
+```
+只用 B 矩陣，不用 A。論文明確指出："the output transformation matrix B captures task-specific information, whereas the input matrix A tends to encode general linguistic features."
+
+**Clustering 演算法**: Agglomerative Hierarchical Clustering + silhouette score 選 K
+```
+K* = argmax_{k ∈ {2,...,M_max}} S(k)
+```
+
+**Expert 初始化**: 每個 cluster 的 expert 用群內 client 的 A 和 B 平均初始化
+```
+A_j^expert = avg(A_i for i ∈ C_j)
+B_j^expert = avg(B_i for i ∈ C_j)
+```
+
+**Adaptive Top-M MoE**:
+- Router output 從 R^(M×d) 擴展到 R^((2M-1)×d)
+- 前 M 個 output 專屬 assigned expert（多條內部通路）
+- 後 M-1 個 output 對應其他 experts
+- 取 top-M scores → 保證 assigned expert 一定參與，同時允許混合其他 experts
+- Forward: y = W_0 x + Σ ω̂_i · B_j A_j x，ω̂ = softmax(Gx)
+
+**聚合**: 只在 cluster 內聚合 assigned expert，其他 expert 保持 frozen
+
+**Key Finding — Expert Selection vs Layer Depth**:
+- 深層 activate 更多 experts
+- 困難任務需要更多 experts
+- 同 cluster 的 client 有相似的 selection pattern
+
+#### 實驗設定
+
+| | NLU | NLG |
+|---|---|---|
+| Model | RoBERTa-Large (355M) | LLaMA-2-7B (8-bit) |
+| Tasks | SST-2, QNLI, MRPC, QQP | Text Editing, Struct-to-Text, Sentiment, Commonsense |
+| Clients | 16 (4 per task) | 8 (2 per dataset) |
+| Rounds | 25 | 10 |
+| Local epochs | 2 | 2 |
+| Batch size | 128 | 8 |
+| LoRA rank | 4 | 8 |
+| LoRA target | query, value | — |
+| M_max | 8 | 8 |
+| Optimizer | AdamW | AdamW |
+| Non-IID | 主：跨任務 heterogeneity；副：Dirichlet α=0.5 | 跨任務 |
+
+#### 主要結果（GLUE，跨任務 FL）
+
+| Method | SST-2 | QNLI | MRPC | QQP | Avg |
+|---|---|---|---|---|---|
+| FedIT | 93.33 | 85.43 | 76.35 | 73.82 | 82.23 |
+| FedSA | 91.97 | 82.70 | 82.08 | 81.65 | 84.60 |
+| IFCA+LoRA | 92.95 | 85.90 | 78.63 | 80.42 | 84.48 |
+| **FedLEASE** | **93.33** | **87.22** | **86.93** | **83.57** | **87.76** |
+
+Silhouette 最佳 K=4（恰好 4 個任務），heatmap 顯示 block-diagonal。
+
+#### Ablation
+
+- 1 個 expert (r=4): 82.00% → 4 個 expert: 87.76%（+5.76%）
+- 1 個 expert (r=16, 同參數量): 83.84% → 仍不如 4 expert
+- 16 個 expert (每人一個): 80.69% → 太多 expert 反而差（overfitting）
+- 無 adaptive top-M: 85.91% → 有: 87.76%（MoE 機制貢獻 +1.85%）
+
+#### 與 FedALC-LoRA 的差異
+
+| | FedLEASE | FedALC-LoRA |
+|---|---|---|
+| 架構 | 多個獨立完整 LoRA (experts) + MoE router | 一套 LoRA，A/B 分離處理 |
+| A/B 分離 | 不區分，A 和 B 都按 cluster | A global, B cluster, others local |
+| 推論時 | MoE router 動態混合多個 experts | 直接用 global A + cluster B |
+| Clustering 依據 | B 矩陣 per-layer cosine distance | B 矩陣 full flatten cosine similarity |
+| 選 K | Agglomerative + silhouette scan | AP 自動決定 |
+| 場景 | 跨任務（4 tasks × 4 clients） | 同任務 non-IID（30 clients） |
+| 參數量 | K × LoRA + router | 1 × LoRA（不增加） |
+| A 的觀察 | 明確指出 A = general, B = task-specific | 同（基於 FedSA-LoRA）|
+| 設計哲學 | 多 expert + 混合使用，更靈活但更重 | 利用 A/B 角色差異，輕量 |
+
+**Note**: FedLEASE 的 clustering metric 是 **per-layer averaged** cosine distance（逐層算再平均），不是 flatten 全部 B 一起算。這跟 FedALC-LoRA 的 full flatten 不同——per-layer average 本身就是一種隱式的 layer-wise 處理（每層權重相等）。
 
 ### 12. CORNFLQS: Robust Clustered Federated Learning for Non-IID
 - **發表**: arXiv 2025

@@ -80,11 +80,22 @@ Non-IID 下每個 client 的 label distribution $P_n(y)$ 不同 → optimal deci
 
 ### 為什麼需要 Layer Selection？（Phase 3）
 
-不是所有層的 B 都包含同等品質的 clustering 信號：
+**現有方法的 clustering metric 比較：**
 
-1. **淺層**做 general feature extraction → B 跨 client 差異小 → 混入 similarity 計算會**稀釋信號**
-2. **深層**做 task-specific adaptation → B 跨 client 差異大 → 是真正有價值的 **clustering signal**
-3. 但「哪些層有判別力」跟 task/domain 有關 → 需要 **adaptive** selection，而非固定規則
+| 方法 | Clustering metric | Layer 處理 |
+|---|---|---|
+| FedALC Phase 1 | 全部 B flatten → cosine | 不區分層（全部混在一起） |
+| FedLEASE | per-layer cosine → **等權平均** | 隱式 layer-wise（每層貢獻相等） |
+| FedADC | MADC on full update | 不區分層 |
+| **FedALC Phase 3** | per-layer cosine → **adaptive weighting/selection** | **顯式 layer-wise**（按判別力加權） |
+
+FedLEASE 的 per-layer averaged cosine distance 已經是一種 layer-wise 處理，但假設每層等權重。我們的改進是：
+
+1. **不是所有層的 B 都包含同等品質的 clustering 信號**：
+   - 淺層做 general feature extraction → B 跨 client 差異小 → 稀釋信號
+   - 深層做 task-specific adaptation → B 跨 client 差異大 → 有價值的 clustering signal
+2. **哪些層有判別力跟 task/domain 有關** → 需要 adaptive selection，而非等權平均
+3. **Multi-task FL 場景下更重要**：不同任務對不同層敏感，等權平均會讓信號互相抵消
 
 **類比 Fisher's Linear Discriminant**（注意：跟 Fisher Information Matrix 是不同概念）：
 
@@ -93,6 +104,8 @@ Non-IID 下每個 client 的 label distribution $P_n(y)$ 不同 → optimal deci
 $$J(l) = \frac{\sigma_{\text{between}}^2(l)}{\sigma_{\text{within}}^2(l)}$$
 
 Cosine dissimilarity 是 $J(l)$ 的 proxy：dissimilarity 高 → between-cluster spread 大。
+
+**Phase 1 實驗觀察**：在單任務 + Dirichlet α=0.5 下，full B clustering 已經足夠好（silhouette 達 0.99），layer selection 的改善空間有限。Layer selection 的價值主要在 multi-task / cross-domain 場景下才會顯現。
 
 ---
 
@@ -141,11 +154,27 @@ FedAvg (full A+B aggregation)
 
 | | FedADC | FedALC-LoRA |
 |---|---|---|
-| Similarity metric | MADC（二階：比較 similarity profile） | Cosine on selected layers（一階，但降噪） |
-| 處理高維方式 | MADC 繞過 structural awareness 問題 | Layer selection 從根本降維，避開 concentration |
+| Similarity metric | MADC（比較 similarity profile） | Cosine similarity（直接比較 B） |
 | Clustering 對象 | Full model update (A+B) | 只對 B 矩陣 |
 | 聚合方式 | 交替 sim/dissim stage，A 和 B 分階段 | A 永遠全域聚合，B 永遠群內聚合 |
 | 訓練方式 | 交替 freeze A/B | A 和 B 同時訓練 |
+| 選 K | AP 自動（同） | AP 自動（同） |
+
+### 與 FedLEASE 的差異
+
+| | FedLEASE (NeurIPS 2025) | FedALC-LoRA |
+|---|---|---|
+| 架構 | 多個獨立 LoRA (experts) + MoE router | 一套 LoRA，A/B 分離 |
+| A/B 分離 | 不區分，A 和 B 都按 cluster | A global, B cluster, others local |
+| Clustering metric | **Per-layer averaged** cosine distance | Full flatten cosine similarity |
+| 推論時 | MoE router 動態混合多個 experts | 直接用 global A + cluster B |
+| 選 K | Agglomerative + silhouette scan | AP 自動決定 |
+| 參數量 | K × LoRA + router | 1 × LoRA（不增加） |
+| 場景 | 跨任務 FL（4 tasks × 4 clients） | 同任務 non-IID（30 clients） |
+
+**重要觀察**：FedLEASE 的 clustering metric 是 per-layer averaged cosine distance（逐層算再等權平均），本身就是一種隱式的 layer-wise 處理。FedALC-LoRA 的 Phase 3 layer selection 是這個思路的進階版——從等權平均改為 adaptive weighting/selection，讓更有判別力的層貢獻更大。
+
+**FedLEASE 論文也明確指出**："the output transformation matrix B captures task-specific information, whereas the input matrix A tends to encode general linguistic features." 這跟我們基於 FedSA-LoRA 的 A/B 角色分離設計前提一致。
 
 ---
 
