@@ -15,6 +15,7 @@ from bert.models import cosine_annealing, get_model, get_parameters, get_paramet
 from bert.strategy import FedAvgStrategy
 from bert.fedsa_strategy import FedSALoRAStrategy
 from bert.fedalc_strategy import FedALCStrategy
+from bert.fedalc_lwc_strategy import FedALCLWCStrategy
 
 
 def get_metrics_aggregation_fn(log_path, phase, use_wandb=False):
@@ -321,6 +322,17 @@ def server_fn(context: Context):
             lora_param_keys=lora_param_keys,
             use_wandb=wandb_enabled,
             log_dir=log_subdir,
+            **common_kwargs,
+        )
+    elif aggregation_mode == "fedalc-lwc":
+        strategy = FedALCLWCStrategy(
+            lora_param_keys=lora_param_keys,
+            use_wandb=wandb_enabled,
+            log_dir=log_subdir,
+            warmup_sil_threshold=float(cfg.get("warmup-sil-threshold", 0.5)),
+            freeze_sil_threshold=float(cfg.get("freeze-sil-threshold", 0.9)),
+            layer_selection_k=int(cfg.get("layer-selection-k", 10)),
+            layer_reselect_every=int(cfg.get("layer-reselect-every", 0)),
             **common_kwargs,
         )
     else:

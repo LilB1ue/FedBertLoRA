@@ -1,10 +1,15 @@
 # FedALC-LoRA: Adaptive Layer-selective Clustering for Federated Low-Rank Adaptation
 
-> 最後更新：2026-04-06
+> 最後更新：2026-04-15
 
 ## 一句話摘要
 
-在聯邦 LoRA 微調中，用 AP clustering 讓相似 client 的 B 矩陣群內聚合（而非完全留本地），並透過**自適應 layer selection** 挑選最具判別力的層作為 clustering feature，提升分群品質。
+在聯邦 LoRA 微調中，用 AP clustering 讓相似 client 的 B 矩陣群內聚合（而非完全留本地），並透過 **Metric B（dissimilarity × norm）** 自適應挑選最具判別力的層作為 clustering feature。
+
+## 方法變體
+
+- **FedALC**：Phase 1，全部 B flatten → AP clustering → per-cluster avg。已實作，已有結果。
+- **FedALC-LWC**：Phase 3，warm-up → Metric B layer selection → selected layers AP clustering。設計中，詳見 `notes/plans/fedalc_lwc_design.md`。
 
 ---
 

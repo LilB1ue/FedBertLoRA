@@ -61,8 +61,14 @@ logging-steps = 10
 log-dir = "logs"
 log-timestamp = ""
 
-# Strategy: "fedavg" | "fedsa" | "ffa" | "fedalc"
+# Strategy: "fedavg" | "fedsa" | "ffa" | "fedalc" | "fedalc-lwc"
 aggregation-mode = "fedsa"
+
+# FedALC-LWC parameters
+warmup-sil-threshold = 0.5
+freeze-sil-threshold = 0.8
+layer-selection-k = 10
+layer-reselect-every = 1  # 1=every round, 0=one-shot, N=every N rounds
 
 # Wandb (FL client logging)
 wandb-enabled = false

@@ -17,6 +17,7 @@
 |------|------|
 | [research_plan.md](plans/research_plan.md) | FedALC-LoRA 三階段研究規劃（Phase 1-3） |
 | [next_steps.md](plans/next_steps.md) | 下一步行動計劃（Step 1-5，含決策分支） |
+| [fedalc_lwc_design.md](plans/fedalc_lwc_design.md) | FedALC-LWC 設計：三階段流程、config 參數、設計 vs 實作對照、weakness、ablation |
 
 ## implementation/ — 實作細節
 
