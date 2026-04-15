@@ -117,8 +117,8 @@ Layer selection 的價值在 **multi-task / cross-domain** 場景：
 | Metric | 公式 | 來源 |
 |---|---|---|
 | Full flatten cosine | cos(flatten(B_all), flatten(B_all)) | FedALC Phase 1 |
-| Per-layer equal-weight | avg_l(cos(B_l, B_l)) | FedLEASE |
-| Per-layer adaptive weight | Σ_l w_l × cos(B_l, B_l), w_l ∝ score(l) | **FedALC Phase 3** |
+| Per-layer equal-weight | $\frac{1}{L}\sum_l \cos(\mathbf{B}_l^n, \mathbf{B}_l^m)$ | FedLEASE |
+| Per-layer adaptive weight | $\sum_l w_l \cdot \cos(\mathbf{B}_l^n, \mathbf{B}_l^m),\; w_l \propto \text{score}_B(l)$ | **FedALC Phase 3** |
 | Per-layer top-K selection | cos(concat(B_{selected}), ...) | **FedALC Phase 3** |
 
 **Discriminability score（三個 metric，見 FedALC-LoRA.md §5）：**

@@ -149,7 +149,7 @@ Layer-wise 在 single task 下的可能性：
 **不需要改 code，只需分析現有 checkpoint**
 
 - 從 client_checkpoints 載入每個 client 的 B 矩陣
-- 逐層計算 discriminability score（Metric B: dissimilarity × norm）
+- 逐層計算 discriminability score（Metric B: $\text{score}_B(l) = (1 - \overline{\cos}) \times \overline{\|\mathbf{B}_l\|_F}$）
 - 比較不同層的分數差異
 - 分別做 α=0.3 和 α=0.5
 

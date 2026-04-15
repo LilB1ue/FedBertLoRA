@@ -34,7 +34,7 @@
 
 ```
 1. 算 pairwise cosine similarity → N×N matrix
-2. MADC(n,m) = mean(|cos(n,l) - cos(m,l)|) for all l≠n,m → N×N matrix
+2. $\text{MADC}(n,m) = \frac{1}{N-2}\sum_{l \neq n,m} |\cos(n,l) - \cos(m,l)|$ → N×N matrix
 3. Preference matrix:
    - Similarity clustering: preference = -madc（小 = 像 → 同群）
    - Dissimilarity clustering: preference = +madc（大 = 不像 → 同群）
@@ -48,7 +48,7 @@
 ### FedLEASE
 
 ```
-1. Per-layer cosine distance: d(i,j) = (1/|L|) Σ_l (1 - cos(B_i^l, B_j^l))
+1. Per-layer cosine distance: $d(i,j) = \frac{1}{|L|}\sum_l (1 - \cos(\mathbf{B}_i^l, \mathbf{B}_j^l))$
 2. Agglomerative Hierarchical Clustering → 建 dendrogram
 3. 對 K=2,3,...,K_max 切 dendrogram → 算 silhouette score
 4. K* = argmax silhouette
@@ -63,7 +63,7 @@
 
 ```
 1. 每個 client 的 B 做 SVD → top-r left singular vectors U_i
-2. Subspace distance: d(i,j) = 1 - (1/r) ||U_i^T U_j||_F^2（principal angles）
+2. Subspace distance: $d(i,j) = 1 - \frac{1}{r}\|\mathbf{U}_i^T \mathbf{U}_j\|_F^2$（principal angles）
 3. Distance → Gaussian kernel affinity matrix: S_ij = exp(-d_ij^2 / (2σ^2))
 4. Spectral Clustering，sweep K ∈ [K_min, K_max]
 5. Eigengap of normalized Laplacian → 自動選 K*

@@ -35,7 +35,7 @@ FedADC 的核心 similarity metric。標準 cosine similarity 在高維空間有
 
 MADC 公式（Eq. 11）：
 ```
-madc(n, m) = 1/(N-2) * Σ_{l ≠ n,m} |cos(n,l) - cos(m,l)|
+$$\text{MADC}(n, m) = \frac{1}{N-2} \sum_{l \neq n,m} |\cos(n,l) - \cos(m,l)|$$
 ```
 
 做法：不直接比 n 和 m 的參數，而是比較 n 和 m 各自跟所有其他 client 的 cosine similarity profile。如果兩個 profile 很像（MADC 小），表示 n 和 m 在整個群體中的「關係模式」相似。
@@ -174,7 +174,7 @@ MADC 不是 FedADC 原創，引用自先行研究 [41,45]。
 
 **Clustering Metric（per-layer averaged cosine distance）**:
 ```
-d(i,j) = (1/|L|) Σ_l (1 - cos(B_i^l, B_j^l))
+$$d(i,j) = \frac{1}{|L|}\sum_l \left(1 - \cos(\mathbf{B}_i^l, \mathbf{B}_j^l)\right)$$
 ```
 只用 B 矩陣，不用 A。論文明確指出："the output transformation matrix B captures task-specific information, whereas the input matrix A tends to encode general linguistic features."
 
