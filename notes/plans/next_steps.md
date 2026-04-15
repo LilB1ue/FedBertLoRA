@@ -119,6 +119,27 @@ Layer-wise 在 single task 下的可能性：
 
 對。Centralized 是不同的訓練方式（全量資料、no communication），不是 FL 方法的 baseline。FL 方法之間的比較（FedAvg vs FedSA vs FedALC）更重要。Centralized 可以在 paper 的 table 裡報，但 plot 裡不需要。
 
+### Q4: Clustering 穩定性分析與 AP 頻率
+
+**穩定期內完全沒有 client 換 cluster**（從 clustering.jsonl 驗證）：
+
+| 實驗 | 穩定期 | 穩定輪數 | 期間 client 換群 |
+|---|---|---|---|
+| SST-2 α=0.5 | R1-R21 | 21 輪 | 0 |
+| QNLI α=0.5 | R1-R21 | 21 輪 | 0 |
+| SST-2 α=0.3 | R1-R17 | 17 輪 | 0 |
+| QNLI α=0.3 | R1-R25 | 25 輪 | 0 |
+
+驗證方式：每輪的 cluster 成員轉成 `set of frozensets`（不管 AP 的 label/exemplar，只看「誰跟誰同群」），跟上一輪比較。
+
+**震盪開始後**才有大量 client 移動（一次 11-29 個），是 AP degenerate 造成的，不是有意義的重新分群。
+
+**AP 頻率建議**：
+- ❌ 只在 R1 做一次 → R1 的 B≈0（silhouette 0.05-0.14），分群品質差，雖然後來自我強化但不保證所有設定都行
+- ✅ **前幾輪每輪做 AP → silhouette > 0.8 後 freeze clustering** → 之後只監控 silhouette 不重新分群
+- 如果 silhouette 突然掉 → 觸發重新 clustering
+- 這樣既避免 R1 亂分的風險，也避免後期 AP 震盪
+
 ---
 
 ## 接下來的 Steps（更新）
