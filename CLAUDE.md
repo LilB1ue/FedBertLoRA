@@ -11,6 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **FedSA-LoRA**: A 聚合，B 留本地
 - **FFA-LoRA**: A freeze，只聚合 B
 - **FedALC-LoRA**: A 全域聚合，B 按 AP clustering 群內聚合，others 留本地
+- **FedALC-LWC**: FedALC + warm-up + Metric B layer selection + clustering freeze
 
 ### 相關論文
 - **FedSA-LoRA** (ICLR 2025): A 矩陣聚合、B 矩陣留本地
@@ -45,13 +46,15 @@ bash run_fedsa_all.sh               # FedSA-LoRA 全任務
 bash run_fedalc_all.sh              # FedALC-LoRA α=0.5 (SST-2 + QNLI, 30 rounds)
 bash run_fedalc_alpha03.sh          # FedALC-LoRA α=0.3
 bash run_baseline_alpha03.sh        # FedAvg + FedSA α=0.3 baselines
+bash run_fedalc_lwc.sh              # FedALC-LWC α=0.5 (SST-2 + QNLI, 20 rounds)
+bash run_fedalc_lwc.sh local-simulation 30 0.3  # FedALC-LWC α=0.3
 ```
 
 ### 快速切換實驗設定 (修改 pyproject.toml)
 
 ```toml
 # 切換策略
-aggregation-mode = "fedsa"   # "fedavg" | "fedsa" | "ffa" | "fedalc"
+aggregation-mode = "fedsa"   # "fedavg" | "fedsa" | "ffa" | "fedalc" | "fedalc-lwc"
 
 # 切換任務 + LoRA rank
 task-name = "sst2"           # "sst2" | "qnli" | "mnli" | "qqp" | "rte"
@@ -71,6 +74,7 @@ bert/
 ├── strategy.py        # FedAvgStrategy: 標準 FedAvg 策略
 ├── fedsa_strategy.py  # FedSALoRAStrategy: selective aggregation (FedSA/FFA 模式)
 ├── fedalc_strategy.py # FedALCStrategy: AP clustering B + global A + local others
+├── fedalc_lwc_strategy.py # FedALCLWCStrategy: warm-up → layer selection → freeze
 ├── client_app.py      # FlowerClient: 本地 LoRA 訓練 + checkpoint 存儲
 ├── server_app.py      # ServerApp: 初始化模型 + strategy 選擇 + server-side evaluation + wandb
 └── __init__.py
@@ -146,7 +150,11 @@ logs/{timestamp}/{task}_{strategy}/
 | `lora-r` | `8` | LoRA rank (全部任務統一 r=8) |
 | `lora-alpha` | `16` | LoRA scaling |
 | `lora-target-modules` | `query,key,value,dense` | LoRA 套用的模組（attention Q/K/V + 所有 dense） |
-| `aggregation-mode` | `fedsa` | 聚合策略: fedavg / fedsa / ffa / fedalc |
+| `aggregation-mode` | `fedsa` | 聚合策略: fedavg / fedsa / ffa / fedalc / fedalc-lwc |
+| `warmup-sil-threshold` | `0.5` | LWC: warm-up 結束的 silhouette 門檻 |
+| `freeze-sil-threshold` | `0.8` | LWC: clustering freeze 的 silhouette 門檻 |
+| `layer-selection-k` | `10` | LWC: top-K 層數 |
+| `layer-reselect-every` | `1` | LWC: 每 N 輪重新選層（0=one-shot） |
 | `dirichlet-alpha` | `0.5` | Non-IID 程度 |
 | `num-server-rounds` | `20` | FL 總輪數 |
 | `fraction-fit` | `1.0` | 每輪參與比例 |
