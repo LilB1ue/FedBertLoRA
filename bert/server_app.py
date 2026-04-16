@@ -14,8 +14,9 @@ from bert.dataset import get_num_labels, load_centralized_data
 from bert.models import cosine_annealing, get_model, get_parameters, get_parameter_keys, set_parameters, set_seed
 from bert.strategy import FedAvgStrategy
 from bert.fedsa_strategy import FedSALoRAStrategy
-from bert.fedalc_strategy import FedALCStrategy
-from bert.fedalc_lwc_strategy import FedALCLWCStrategy
+from bert.fedalc_ap_strategy import FedALCAPStrategy
+from bert.fedalc_ap_lwc_strategy import FedALCAPLWCStrategy
+from bert.fedalc_ap_multi_strategy import FedALCAPMultiStrategy
 
 
 def get_metrics_aggregation_fn(log_path, phase, use_wandb=False):
@@ -317,15 +318,15 @@ def server_fn(context: Context):
 
     if aggregation_mode == "fedavg":
         strategy = FedAvgStrategy(**common_kwargs)
-    elif aggregation_mode == "fedalc":
-        strategy = FedALCStrategy(
+    elif aggregation_mode == "fedalc-ap":
+        strategy = FedALCAPStrategy(
             lora_param_keys=lora_param_keys,
             use_wandb=wandb_enabled,
             log_dir=log_subdir,
             **common_kwargs,
         )
-    elif aggregation_mode == "fedalc-lwc":
-        strategy = FedALCLWCStrategy(
+    elif aggregation_mode == "fedalc-ap-lwc":
+        strategy = FedALCAPLWCStrategy(
             lora_param_keys=lora_param_keys,
             use_wandb=wandb_enabled,
             log_dir=log_subdir,
@@ -333,6 +334,20 @@ def server_fn(context: Context):
             freeze_sil_threshold=float(cfg.get("freeze-sil-threshold", 0.9)),
             layer_selection_k=int(cfg.get("layer-selection-k", 10)),
             layer_reselect_every=int(cfg.get("layer-reselect-every", 0)),
+            **common_kwargs,
+        )
+    elif aggregation_mode == "fedalc-ap-multi":
+        strategy = FedALCAPMultiStrategy(
+            lora_param_keys=lora_param_keys,
+            use_wandb=wandb_enabled,
+            log_dir=log_subdir,
+            hopkins_threshold=float(cfg.get("hopkins-threshold", 0.75)),
+            warmup_max_rounds=int(cfg.get("warmup-max-rounds", 10)),
+            freeze_sil_threshold=float(cfg.get("freeze-sil-threshold", 0.9)),
+            freeze_stable_rounds=int(cfg.get("freeze-stable-rounds", 3)),
+            layer_selection_k=int(cfg.get("layer-selection-k", 10)),
+            layer_reselect_every=int(cfg.get("layer-reselect-every", 1)),
+            layer_score_feature=str(cfg.get("layer-score-feature", "cumulative_delta_b")),
             **common_kwargs,
         )
     else:

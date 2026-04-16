@@ -1,6 +1,6 @@
 # FedALC-LoRA: Adaptive Layer-selective Clustering for Federated Low-Rank Adaptation
 
-> 最後更新：2026-04-15
+> 最後更新：2026-04-16
 
 ## 一句話摘要
 
@@ -8,8 +8,27 @@
 
 ## 方法變體
 
-- **FedALC**：Phase 1，全部 B flatten → AP clustering → per-cluster avg。已實作，已有結果。
-- **FedALC-LWC**：Phase 3，warm-up → Metric B layer selection → selected layers AP clustering。設計中，詳見 `notes/plans/fedalc_lwc_design.md`。
+- **FedALC-AP**（basic baseline）：全部 B flatten → AP clustering → per-cluster avg。已實作，已有結果。
+- **FedALC-AP-LWC**（ablation baseline）：silhouette warm-up → Metric B layer selection → selected layers AP clustering。已實作。
+- **FedALC-AP-Multi**（主方法）：adaptive FedSA warm-up → **內建 Metric B 層選擇降維** → Hopkins trigger on top-K ΔB → cumulative ΔB clustering → silhouette / stable-round freeze。已實作，target multi-task FL 場景。
+  - Layer selection 是 FedALC-AP-Multi 的**內建前處理**（不是獨立 variant），原因：Hopkins 在 D>50 會因 curse of dimensionality 失效 + `u_dist**d` 數值溢位。詳見 `notes/papers/task_vector_connection.md`。
+
+## Theoretical Framing: Task Vector Perspective
+
+LoRA 的 $\Delta W = BA$ 是 rank-$r$ task vector（Ilharco et al., 2023）：
+- **A** = shared subspace basis（general features）
+- **B** = task-specific linear combination in that basis
+- **ΔB** = $B_{\text{current}} - B_{\text{init}}$ = 學到的 task vector 分量
+
+**FedALC 在 task vector 框架下**：
+- Client 的 ΔW_i = B_i A_i 是一個 rank-r task vector
+- Global A aggregation = 共享 subspace basis（general features 對齊）
+- Per-cluster B aggregation = 相似 task 的 client 合併 task vectors
+- Others local = classifier 個人化
+
+這讓 FedALC 成為 **federated task vector clustering with shared basis**——將 task arithmetic（centralized 下的合併）延伸到 FL 異質場景的自然推廣。
+
+詳見 `notes/papers/task_vector_connection.md`。
 
 ---
 

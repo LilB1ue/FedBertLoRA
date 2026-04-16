@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class FedALCLWCStrategy(FedAvg):
+class FedALCAPLWCStrategy(FedAvg):
     """Layer-wise clustering: warm-up → layer selection → AP clustering → freeze.
 
     Args:
@@ -73,8 +73,8 @@ class FedALCLWCStrategy(FedAvg):
         self.use_wandb = use_wandb
         self.log_dir = log_dir
 
-        # Phase: 0=warmup(FedSA), 1=layer_selected_clustering, 2=frozen
-        self.phase = 0
+        # Phase: 1=layer_selected_clustering, 2=frozen (no warm-up)
+        self.phase = 1
 
         # Per-client state
         self.client_b_matrices: Dict[str, List[np.ndarray]] = {}
@@ -101,7 +101,7 @@ class FedALCLWCStrategy(FedAvg):
             self._cluster_log_path = os.path.join(log_dir, "clustering.jsonl")
 
         logger.info(
-            f"FedALCLWCStrategy initialized (warmup_sil={warmup_sil_threshold}, "
+            f"FedALCAPLWCStrategy initialized (warmup_sil={warmup_sil_threshold}, "
             f"freeze_sil={freeze_sil_threshold}, layer_k={layer_selection_k})"
         )
 
@@ -213,6 +213,7 @@ class FedALCLWCStrategy(FedAvg):
         client_weights: List[int],
         client_cids: List[str],
         server_round: int,
+        cid_to_pid: Optional[Dict[str, str]] = None,
     ) -> Tuple[Dict[str, List[np.ndarray]], Dict[str, Scalar]]:
         """AP clustering using only selected layers' B, aggregate ALL B per cluster."""
         metrics: Dict[str, Scalar] = {}
@@ -267,12 +268,18 @@ class FedALCLWCStrategy(FedAvg):
                     "method": "layer_selected",
                     "selected_layer_indices": self.selected_layer_indices,
                     "selected_b_keys": selected_b_keys,
-                    "layer_scores_topk": [round(s, 4) for s in self.selected_layer_scores]
+                    "layer_scores_topk": [round(float(s), 4) for s in self.selected_layer_scores]
                             if self.selected_layer_scores else [],
                     "metric": "dissim_norm",
                     "n_params_clustering": int(feature_matrix.shape[1]),
                 },
-                "clusters": {str(k): v for k, v in sorted(cluster_members.items())},
+                "clusters": {
+                    str(k): (
+                        sorted([cid_to_pid.get(c, c) for c in v], key=lambda x: int(x) if x.isdigit() else x)
+                        if cid_to_pid else v
+                    )
+                    for k, v in sorted(cluster_members.items())
+                },
             }
             with open(self._cluster_log_path, "a") as f:
                 f.write(json.dumps(log_entry) + "\n")
@@ -330,6 +337,7 @@ class FedALCLWCStrategy(FedAvg):
         client_other_list: List[List[np.ndarray]] = []
         client_weights: List[int] = []
         client_cids: List[str] = []
+        cid_to_pid: Dict[str, str] = {}
         fit_metrics_list: List[Tuple[int, dict]] = []
 
         for client, fit_res in results:
@@ -340,6 +348,7 @@ class FedALCLWCStrategy(FedAvg):
             client_other_list.append(other_params)
             client_weights.append(fit_res.num_examples)
             client_cids.append(client.cid)
+            cid_to_pid[client.cid] = str(fit_res.metrics.get("partition_id", client.cid))
             fit_metrics_list.append((fit_res.num_examples, fit_res.metrics))
 
         # A: always global FedAvg
@@ -356,79 +365,33 @@ class FedALCLWCStrategy(FedAvg):
 
         clustering_metrics: Dict[str, Scalar] = {}
 
-        # ── Phase 0: Warm-up (FedSA mode) ──
-        if self.phase == 0:
-            # B stays local per-client (FedSA)
-            for cid, b in zip(client_cids, client_b_list):
-                self.client_b_matrices[cid] = b
+        # ── Phase 1: Layer-selected clustering ──
+        if self.phase == 1:
+            # Compute layer scores: first round always, then based on reselect_every
+            need_select = self.selected_layer_indices is None  # first round
+            if not need_select and self.layer_reselect_every > 0:
+                self._rounds_since_reselect += 1
+                if self._rounds_since_reselect >= self.layer_reselect_every:
+                    need_select = True
 
-            # Trial AP to check silhouette
-            sil, n_clusters, _ = self._trial_ap_silhouette(client_b_list)
-            clustering_metrics["silhouette_score"] = sil
-            clustering_metrics["n_clusters"] = n_clusters
-            clustering_metrics["phase"] = 0
-
-            # Log warm-up trial
-            if self._cluster_log_path:
-                log_entry = {
-                    "round": server_round,
-                    "phase": 0,
-                    "n_clusters": n_clusters,
-                    "silhouette_score": round(sil, 6),
-                    "clustering_features": {"method": "warmup_trial"},
-                    "clusters": {},
-                }
-                with open(self._cluster_log_path, "a") as f:
-                    f.write(json.dumps(log_entry) + "\n")
-
-            logger.info(
-                f"Round {server_round}: Phase 0 (warm-up), "
-                f"trial sil={sil:.4f}, threshold={self.warmup_sil_threshold}"
-            )
-
-            # Check phase transition: 0 → 1
-            if sil >= self.warmup_sil_threshold:
-                self.phase = 1
-                # Compute layer scores and select top-K
+            if need_select:
                 scores = self._compute_layer_scores(client_b_list)
                 top_k_indices = sorted(
                     range(len(scores)), key=lambda i: scores[i], reverse=True
                 )[:self.layer_selection_k]
                 self.selected_layer_indices = sorted(top_k_indices)
                 self.selected_layer_scores = [scores[i] for i in self.selected_layer_indices]
+                self._rounds_since_reselect = 0
 
                 b_keys = [k for k in self.lora_param_keys if "lora_B" in k]
                 selected_names = [b_keys[i] for i in self.selected_layer_indices]
                 logger.info(
-                    f"Round {server_round}: → Phase 1, selected {len(self.selected_layer_indices)} layers: "
-                    f"{selected_names[:5]}..."
+                    f"Round {server_round}: Layer selection → {selected_names[:3]}... "
+                    f"(top-{self.layer_selection_k})"
                 )
-
-                # Immediately do layer-selected clustering this round
-                clustered_b, cl_metrics = self._cluster_with_selected_layers(
-                    client_b_list, client_weights, client_cids, server_round
-                )
-                self.client_b_matrices = clustered_b
-                clustering_metrics.update(cl_metrics)
-                clustering_metrics["phase"] = self.phase  # now 1 (or 2 if immediate freeze)
-
-        # ── Phase 1: Layer-selected clustering ──
-        elif self.phase == 1:
-            # Periodic layer reselection (if enabled)
-            if self.layer_reselect_every > 0:
-                self._rounds_since_reselect += 1
-                if self._rounds_since_reselect >= self.layer_reselect_every:
-                    scores = self._compute_layer_scores(client_b_list)
-                    top_k_indices = sorted(
-                        range(len(scores)), key=lambda i: scores[i], reverse=True
-                    )[:self.layer_selection_k]
-                    self.selected_layer_indices = sorted(top_k_indices)
-                    self.selected_layer_scores = [scores[i] for i in self.selected_layer_indices]
-                    self._rounds_since_reselect = 0
-                    logger.info(f"Round {server_round}: Layer reselection triggered")
 
             clustered_b, cl_metrics = self._cluster_with_selected_layers(
-                client_b_list, client_weights, client_cids, server_round
+                client_b_list, client_weights, client_cids, server_round, cid_to_pid=cid_to_pid
             )
             self.client_b_matrices = clustered_b
             clustering_metrics.update(cl_metrics)
@@ -478,7 +441,13 @@ class FedALCLWCStrategy(FedAvg):
                     "n_clusters": n_clusters,
                     "silhouette_score": -1.0,
                     "clustering_features": {"method": "frozen"},
-                    "clusters": {str(k): v for k, v in cluster_groups.items()},
+                    "clusters": {
+                        str(k): sorted(
+                            [cid_to_pid.get(c, c) for c in v],
+                            key=lambda x: int(x) if x.isdigit() else x
+                        )
+                        for k, v in cluster_groups.items()
+                    },
                 }
                 with open(self._cluster_log_path, "a") as f:
                     f.write(json.dumps(log_entry) + "\n")

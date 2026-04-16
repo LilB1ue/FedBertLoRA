@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class FedALCStrategy(FedAvg):
+class FedALCAPStrategy(FedAvg):
     """Strategy with AP clustering on B matrices, global A, local others.
 
     Args:
@@ -75,7 +75,7 @@ class FedALCStrategy(FedAvg):
             self._cluster_log_path = os.path.join(log_dir, "clustering.jsonl")
 
         logger.info(
-            f"FedALCStrategy initialized (AP damping={ap_damping}, max_iter={ap_max_iter})"
+            f"FedALCAPStrategy initialized (AP damping={ap_damping}, max_iter={ap_max_iter})"
         )
 
     def _separate_a_b_others(
@@ -144,6 +144,7 @@ class FedALCStrategy(FedAvg):
         client_weights: List[int],
         client_cids: List[str],
         server_round: int,
+        cid_to_pid: Optional[Dict[str, str]] = None,
     ) -> Tuple[Dict[str, List[np.ndarray]], Dict[str, Scalar]]:
         """Run AP clustering on B matrices and aggregate per-cluster.
 
@@ -209,7 +210,13 @@ class FedALCStrategy(FedAvg):
                     "b_keys": b_keys_used,
                     "n_params": int(feature_matrix.shape[1]),
                 },
-                "clusters": {str(k): v for k, v in sorted(cluster_members.items())},
+                "clusters": {
+                    str(k): (
+                        sorted([cid_to_pid.get(c, c) for c in v], key=lambda x: int(x) if x.isdigit() else x)
+                        if cid_to_pid else v
+                    )
+                    for k, v in sorted(cluster_members.items())
+                },
             }
             with open(self._cluster_log_path, "a") as f:
                 f.write(json.dumps(log_entry) + "\n")
@@ -247,6 +254,7 @@ class FedALCStrategy(FedAvg):
         client_other_list: List[List[np.ndarray]] = []
         client_weights: List[int] = []
         client_cids: List[str] = []
+        cid_to_pid: Dict[str, str] = {}  # for readable logging
         fit_metrics_list: List[Tuple[int, dict]] = []
 
         for client, fit_res in results:
@@ -258,6 +266,7 @@ class FedALCStrategy(FedAvg):
             client_other_list.append(other_params)
             client_weights.append(fit_res.num_examples)
             client_cids.append(client.cid)
+            cid_to_pid[client.cid] = str(fit_res.metrics.get("partition_id", client.cid))
             fit_metrics_list.append((fit_res.num_examples, fit_res.metrics))
 
         # 1. A matrices: global FedAvg
@@ -266,7 +275,7 @@ class FedALCStrategy(FedAvg):
 
         # 2. B matrices: AP clustering → per-cluster FedAvg
         clustered_b, clustering_metrics = self._cluster_b_matrices(
-            client_b_list, client_weights, client_cids, server_round
+            client_b_list, client_weights, client_cids, server_round, cid_to_pid=cid_to_pid
         )
         self.client_b_matrices = clustered_b
 

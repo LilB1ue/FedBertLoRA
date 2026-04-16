@@ -1,6 +1,13 @@
 # FedALC-LoRA 下一步行動計劃
 
-> 最後更新：2026-04-15
+> 最後更新：2026-04-16
+> **⚠️ 本檔案為歷史快照（寫於 FedALC family rename 前）。當前行動計畫見
+> [`fedalc_ap_multi_action_plan.md`](fedalc_ap_multi_action_plan.md)**
+>
+> 命名對照（rename 後）：
+> - 舊 `FedALC` / `FedALCStrategy` → 新 `FedALC-AP` / `FedALCAPStrategy`
+> - 舊 `FedALC-LWC` / `FedALCLWCStrategy` → 新 `FedALC-AP-LWC` / `FedALCAPLWCStrategy`
+> - 舊（暫名）`FedALC-AP` (含 Hopkins / cumulative ΔB / freeze) → 新 `FedALC-AP-Multi`
 
 ## 現狀
 
@@ -167,6 +174,114 @@ Layer-wise 在 single task 下的可能性：
 **如果 single task layer-wise 沒有改善空間：**
 - Multi-task GLUE：SST-2 + QNLI + MNLI 混合 client
 - 或直接用現有結果寫 paper（Phase 1 + Phase 2 已有足夠 contribution）
+
+---
+
+## 接下來的優先任務（2026-04-16 更新）
+
+### Task 0: 注意事項 — Client ID vs Partition ID
+
+**Flower 的 cid 是 UUID-like 的大整數**（如 `'13498018236427358734'`），**不是 partition_id (0-29)**。
+- `clustering.jsonl` 記錄的 clusters 用 cid
+- `fit_metrics.tsv` / `eval_metrics.tsv` 的 `partition_id` 欄位才是 0-29
+- **不同 run 的 cid 不同**（即使 seed=42），不能跨 run 直接比對 cluster membership
+- 要跨 run 比對，需要用 partition_id 重新對齊
+
+### Task 1: 把 Freeze 機制加進 FedALC
+
+**動機**：LWC 的 freeze 機制（silhouette > 0.8 或 3 輪穩定就停止 AP）有效避免了 AP 後期震盪。這個機制跟 layer selection 是獨立的貢獻，應該也加到 FedALC 上。
+
+**實作**：
+- 從 `fedalc_lwc_strategy.py` 複製 freeze 邏輯到 `fedalc_strategy.py`
+- 加 config 參數 `freeze-sil-threshold` 和 `freeze-stable-rounds`
+- 預期結果：FedALC + freeze 的 accuracy 至少跟 FedALC 一樣，但後期 cluster 數不會暴增
+
+**這樣能做的 ablation**：
+- FedALC (原版)
+- **FedALC + freeze** (新)
+- FedALC-LWC (已有，= FedALC + layer-select + freeze)
+- → 可以分離「freeze 的貢獻」和「layer selection 的貢獻」
+
+### Task 2: Clustering 演算法 Ablation（AP vs Agglomerative vs Spectral）
+
+**動機**：AP 後期不穩定的根源是演算法在 extreme bimodal similarity matrix 下的弱點（responsibility message passing 對浮點誤差敏感）。其他 clustering 演算法可能沒有這個問題。
+
+**三種 clustering 比較**：
+
+| 方法 | 選 K 方式 | 原理 | 時間複雜度 | 預期 |
+|---|---|---|---|---|
+| **AP**（現有） | Preference matrix 自動 | Message passing 選 exemplar | $O(N^2 \cdot T_{\text{iter}})$，$T_{\text{iter}} \leq 100$ | 後期震盪 |
+| **Agglomerative + silhouette** | 掃 K=2..K_max，選最高 silhouette | Bottom-up 層次聚合 | $O(N^2 \log N)$ 建 dendrogram + $O(K_{\max} \cdot N)$ silhouette scan | 穩定 |
+| **Spectral + eigengap** | 最大 eigenvalue gap | Laplacian 特徵分解 | $O(N^3)$ SVD + $O(N K d)$ KMeans | 穩定，小 N 可能不準 |
+
+**N=30 下的實際計算量**：
+- AP: ~30² × 100 = 90K ops → 毫秒級
+- Agglomerative: ~30² × log(30) + K_max × 30 ≈ 5K ops → 毫秒級
+- Spectral: ~30³ = 27K ops → 毫秒級
+
+**N=30 下三者的計算量都可以忽略**（B 矩陣維度才是瓶頸：pairwise cosine 是 O(N² × D)，D ≈ 50K）。
+
+**實作**：
+- 在 `fedalc_strategy.py` 加 `clustering_algorithm` 參數（"ap" / "agglomerative" / "spectral"）
+- `_cluster_b_matrices` 裡根據參數選演算法
+- 其他邏輯（layer selection, freeze, aggregation）不變
+
+**實驗矩陣**：3 演算法 × 2 tasks × 2 alpha = 12 次實驗
+
+**預期發現**：
+- Agglomerative 和 Spectral 會比 AP 穩定
+- Accuracy 應該差不多（clustering 結果本來就穩定）
+- 這個 ablation 證明 FedALC 不綁定 AP，任何 clustering 演算法都 work
+
+### Task 3: FFA-LoRA Baseline
+
+跑中（α=0.3/0.5 × SST-2/QNLI × 30 rounds）。
+
+### Task 4: 修正 Global Evaluation
+
+目前 server_eval 對 FedALC 是誤導的。改成 per-client personalized model 在 GLUE validation split 上測。
+
+### Task 5: FedLEASE 簡化版
+
+Agglomerative + per-cluster A+B 聚合（無 MoE）。最重要的 Tier 2 baseline。
+
+## 推薦執行順序
+
+1. **Task 1**（freeze → FedALC）：最快，1-2 小時實作 + 幾小時跑
+2. **Task 3**（FFA baseline）：已在跑，等結果
+3. **Task 2**（clustering ablation）：2-3 天
+4. **Task 4**（global eval 修正）：1 天
+5. **Task 5**（FedLEASE）：2-3 天
+6. Multi-task（如果要做 LWC 驗證）
+
+## Paper 裡這樣組織實驗
+
+### Main Results 表格
+
+| Method | SST-2 α=0.5 | SST-2 α=0.3 | QNLI α=0.5 | QNLI α=0.3 |
+|---|---|---|---|---|
+| FedAvg | | | | |
+| FFA-LoRA | | | | |
+| FedSA-LoRA | | | | |
+| FedLEASE (簡化) | | | | |
+| **FedALC (ours)** | | | | |
+| **FedALC-LWC (ours)** | | | | |
+
+### Ablation 表格
+
+1. **Freeze 機制的貢獻**：FedALC vs FedALC + freeze
+2. **Layer selection 的貢獻**：FedALC + freeze vs FedALC-LWC
+3. **Clustering 演算法**：FedALC (AP) vs FedALC (Agglomerative) vs FedALC (Spectral)
+4. **α 敏感度**：α ∈ {0.3, 0.5, 1.0}（如果要補 1.0）
+
+### Analysis 圖
+
+1. Accuracy 收斂曲線（每 task + α 各一張）
+2. Silhouette score per round
+3. Cluster membership stability
+4. Selected layers heatmap（LWC）
+5. Cluster vs label ratio
+6. A/B 矩陣 cosine heatmap
 
 ### Step 6：整理結果 + 寫 Paper
 

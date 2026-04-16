@@ -61,14 +61,20 @@ logging-steps = 10
 log-dir = "logs"
 log-timestamp = ""
 
-# Strategy: "fedavg" | "fedsa" | "ffa" | "fedalc" | "fedalc-lwc"
+# Strategy: "fedavg" | "fedsa" | "ffa" | "fedalc-ap" | "fedalc-ap-lwc" | "fedalc-ap-multi"
 aggregation-mode = "fedsa"
 
-# FedALC-LWC parameters
+# FedALC-AP-LWC parameters (also reused by FedALC-AP-Multi for built-in layer selection)
 warmup-sil-threshold = 0.5
 freeze-sil-threshold = 0.8
 layer-selection-k = 10
 layer-reselect-every = 1  # 1=every round, 0=one-shot, N=every N rounds
+
+# FedALC-AP-Multi parameters
+hopkins-threshold = 0.75                      # Exit warm-up when Hopkins H > threshold
+warmup-max-rounds = 10                        # Hard cap on warm-up length
+freeze-stable-rounds = 3                      # Freeze when cluster stable for N rounds
+layer-score-feature = "cumulative_delta_b"    # Layer scoring feature: "cumulative_delta_b" | "current_b"
 
 # Wandb (FL client logging)
 wandb-enabled = false

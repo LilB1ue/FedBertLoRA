@@ -6,7 +6,7 @@
 FEDERATION="${1:-local-simulation}"
 ROUNDS="${2:-30}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-COMMON="aggregation-mode='fedalc' num-server-rounds=${ROUNDS} dirichlet-alpha=0.3 wandb-enabled=true log-timestamp='${TIMESTAMP}'"
+COMMON="aggregation-mode='fedalc-ap' num-server-rounds=${ROUNDS} dirichlet-alpha=0.3 wandb-enabled=true log-timestamp='${TIMESTAMP}'"
 
 echo "Run timestamp: ${TIMESTAMP}"
 echo "Rounds: ${ROUNDS}, alpha=0.3"
