@@ -322,6 +322,45 @@ Silhouette 最佳 K=4（恰好 4 個任務），heatmap 顯示 block-diagonal。
 | 場景 | Multi-task（每 client 多 task） | Single/Multi-task（每 client 一 task） |
 | **注意** | 跟 FedALC 場景不同：FL-TAC 的每 client 有多個 task，FedALC 的每 client 只做一個 task | |
 
+## Task Vector & Model Merging（理論 grounding）
+
+### T1. Task Arithmetic
+- **發表**: ICLR 2023
+- **作者**: Ilharco et al.
+- **連結**: [arXiv](https://arxiv.org/abs/2212.04089)
+- **簡介**: 首次系統化 task vector arithmetic。$\tau = \theta_{\text{ft}} - \theta_{\text{pre}}$ 可做加減運算合併/移除 skills。
+- **跟 FedALC 的關係**: 提供 ΔW = BA 作為 rank-r task vector 的 theoretical grounding
+
+### T2. TIES-Merging
+- **發表**: NeurIPS 2024
+- **作者**: Yadav et al.
+- **連結**: [arXiv](https://arxiv.org/abs/2306.01708)
+- **簡介**: Trim + Elect Sign + Disjoint Merge 三步驟解決 task vector merge 時的 sign conflict
+- **跟 FedALC 的關係**: 啟發 cluster 內 B 合併時的 sign handling（future work）
+
+### T3. DARE
+- **發表**: ICML 2024
+- **作者**: Yu et al.
+- **連結**: [arXiv](https://arxiv.org/abs/2311.03099)
+- **簡介**: Drop And REscale—合併前隨機丟棄權重再 rescale
+- **跟 FedALC 的關係**: 啟發 merge 前的 regularization 策略
+
+### T4. LoRA Hub
+- **發表**: EMNLP 2024
+- **作者**: Huang et al.
+- **連結**: [arXiv](https://arxiv.org/abs/2307.13269)
+- **簡介**: Dynamic composition of trained LoRAs via learned coefficients
+- **對比 FedALC**: Centralized multi-task 動態組合 vs FedALC FL 下靜態 clustering
+
+### T5. AdaMerging
+- **發表**: ICLR 2024
+- **作者**: Yang et al.
+- **連結**: [arXiv](https://arxiv.org/abs/2310.02575)
+- **簡介**: Unsupervised test-time learned merging coefficients
+- **對比 FedALC**: 學 coefficient vs FedAvg weights
+
+---
+
 ### 15. Federated Low-Rank Adaptation for Foundation Models: A Survey
 - **發表**: IJCAI 2025
 - **連結**: [arXiv](https://arxiv.org/abs/2505.13502)
