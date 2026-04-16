@@ -61,6 +61,16 @@ def get_model(model_name: str, num_labels: int, lora_r: int, lora_alpha: int,
     return model
 
 
+def freeze_lora_a(model) -> None:
+    """Freeze all lora_A parameters (for FFA-LoRA mode)."""
+    frozen_count = 0
+    for name, param in model.named_parameters():
+        if "lora_A" in name and param.requires_grad:
+            param.requires_grad = False
+            frozen_count += 1
+    print(f"[FFA-LoRA] Froze {frozen_count} lora_A parameters")
+
+
 def get_parameters(model) -> NDArrays:
     """Return all LoRA parameters as a flat list of numpy arrays."""
     state_dict = get_peft_model_state_dict(model)

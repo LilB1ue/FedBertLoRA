@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from transformers import Trainer, TrainingArguments
 
 from bert.dataset import load_data, get_num_labels
-from bert.models import get_model, get_parameters, set_parameters, set_seed
+from bert.models import get_model, get_parameters, set_parameters, set_seed, freeze_lora_a
 
 
 
@@ -209,6 +209,10 @@ def client_fn(context: Context):
         lora_target_modules=target_modules,
         lora_dropout=lora_dropout,
     )
+
+    # FFA-LoRA: freeze A matrices on client side (only train B)
+    if aggregation_mode == "ffa":
+        freeze_lora_a(net)
 
     return FlowerClient(
         net, train_dataset, eval_dataset, tokenizer, data_collator,
