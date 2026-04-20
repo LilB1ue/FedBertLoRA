@@ -139,6 +139,8 @@ pyproject.toml         # Flower 配置 + 所有超參數
 ```
 logs/{timestamp}/{task}_{strategy}/
 ├── clustering.jsonl          # FedALC-AP* only: 每輪 cluster 分配
+# NOTE: main comparison metric is client-side (eval_metrics.tsv), NOT server_eval.tsv,
+# because the project targets personalized models. server_eval is sanity check only.
 ├── fit_metrics.tsv           # per-client train/eval metrics
 ├── eval_metrics.tsv          # per-client eval metrics
 ├── server_eval.tsv           # server-side global eval

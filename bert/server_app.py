@@ -256,12 +256,15 @@ def server_fn(context: Context):
     initial_parameters = ndarrays_to_parameters(initial_weights)
     del net
 
-    # Setup log paths (logs/<timestamp>/<task>_<strategy>_a<alpha>/)
-    # Alpha tag in the subdir prevents overwrite when the same script loops
-    # across multiple dirichlet-alpha values with a shared log-timestamp.
+    # Setup log paths:
+    #   logs/<timestamp>_<mode>_a<alpha>/<task>_<mode>_a<alpha>/
+    # The outer batch dir carries mode+alpha so `ls logs/` is self-describing.
+    # Inner subdir repeats them for robustness (single-subdir paths stay
+    # identifiable when passed to plot scripts).
     log_timestamp = str(cfg.get("log-timestamp", "")) or datetime.now().strftime("%Y%m%d_%H%M%S")
     alpha_tag = f"_a{float(cfg.get('dirichlet-alpha', 0.5))}"
-    log_subdir = os.path.join(log_dir, log_timestamp, f"{task_name}_{aggregation_mode}{alpha_tag}")
+    batch_dir = f"{log_timestamp}_{aggregation_mode}{alpha_tag}"
+    log_subdir = os.path.join(log_dir, batch_dir, f"{task_name}_{aggregation_mode}{alpha_tag}")
     fit_log_path = os.path.join(log_subdir, "fit_metrics.tsv")
     eval_log_path = os.path.join(log_subdir, "eval_metrics.tsv")
     server_log_path = os.path.join(log_subdir, "server_eval.tsv")
