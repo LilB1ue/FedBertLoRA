@@ -14,6 +14,7 @@
 FEDERATION="${1:-local-simulation}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 TASK="sst2"
+ALPHA="0.5"
 
 # Lower hopkins-threshold so Phase 0→1 transition is more likely within 5 rounds.
 # warmup-max-rounds=3 caps warm-up, guaranteeing we see Phase 1 code path too.
@@ -21,7 +22,7 @@ CONFIG=(
     "aggregation-mode='fedalc-ap-multi'"
     "task-name='${TASK}'"
     "num-server-rounds=5"
-    "dirichlet-alpha=0.5"
+    "dirichlet-alpha=${ALPHA}"
     "hopkins-threshold=0.6"
     "warmup-max-rounds=3"
     "layer-selection-k=10"
@@ -50,7 +51,7 @@ if [ ${STATUS} -ne 0 ]; then
     exit ${STATUS}
 fi
 
-LOG_DIR="logs/${TIMESTAMP}/${TASK}_fedalc-ap-multi"
+LOG_DIR="logs/${TIMESTAMP}/${TASK}_fedalc-ap-multi_a${ALPHA}"
 CLUSTERING_LOG="${LOG_DIR}/clustering.jsonl"
 
 if [ ! -f "${CLUSTERING_LOG}" ]; then

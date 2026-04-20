@@ -1,0 +1,27 @@
+old_path	new_path	alpha	source	note
+logs/20260402_120434/sst2_fedavg	logs/20260402_120434/sst2_fedavg_a0.5	0.5	wandb	
+logs/20260402_132128/mnli_fedavg	logs/20260402_132128/mnli_fedavg_a0.5	0.5	wandb	
+logs/20260402_132128/qnli_fedavg	logs/20260402_132128/qnli_fedavg_a0.5	0.5	wandb	
+logs/20260402_132128/qqp_fedavg	logs/20260402_132128/qqp_fedavg_a0.5	0.5	wandb	
+logs/20260402_132128/sst2_fedavg	logs/20260402_132128/sst2_fedavg_a0.5	0.5	wandb	
+logs/20260405_071932/mnli_fedsa	logs/20260405_071932/mnli_fedsa_a0.5	0.5	wandb	
+logs/20260405_071932/qnli_fedsa	logs/20260405_071932/qnli_fedsa_a0.5	0.5	wandb	
+logs/20260405_071932/qqp_fedsa	logs/20260405_071932/qqp_fedsa_a0.5	0.5	wandb	
+logs/20260405_071932/sst2_fedsa	logs/20260405_071932/sst2_fedsa_a0.5	0.5	wandb	
+logs/20260406_203614/qnli_fedalc	logs/20260406_203614/qnli_fedalc_a0.5	0.5	wandb	
+logs/20260406_203614/sst2_fedalc	logs/20260406_203614/sst2_fedalc_a0.5	0.5	wandb	
+logs/20260408_114021/qnli_fedalc	logs/20260408_114021/qnli_fedalc_a0.3	0.3	wandb	
+logs/20260408_114021/sst2_fedalc	logs/20260408_114021/sst2_fedalc_a0.3	0.3	wandb	
+logs/20260412_235402/qnli_fedavg	logs/20260412_235402/qnli_fedavg_a0.3	0.3	wandb	
+logs/20260412_235402/qnli_fedsa	logs/20260412_235402/qnli_fedsa_a0.3	0.3	wandb	
+logs/20260412_235402/sst2_fedavg	logs/20260412_235402/sst2_fedavg_a0.3	0.3	wandb	
+logs/20260412_235402/sst2_fedsa	logs/20260412_235402/sst2_fedsa_a0.3	0.3	wandb	
+logs/20260415_015657/qnli_fedalc-lwc	logs/20260415_015657/qnli_fedalc-lwc_a0.5	0.5	wandb	
+logs/20260415_015657/sst2_fedalc-lwc	logs/20260415_015657/sst2_fedalc-lwc_a0.5	0.5	wandb	
+logs/20260415_063849/qnli_fedalc-lwc	logs/20260415_063849/qnli_fedalc-lwc_a0.5	0.5	wandb	
+logs/20260415_063849/sst2_fedalc-lwc	logs/20260415_063849/sst2_fedalc-lwc_a0.5	0.5	wandb	
+logs/20260416_064902/qnli_ffa	logs/20260416_064902/qnli_ffa_a0.3	0.3	wandb	OVERWRITE alphas seen: [0.3, 0.5]; surviving data = 0.3
+logs/20260416_064902/sst2_ffa	logs/20260416_064902/sst2_ffa_a0.3	0.3	wandb	OVERWRITE alphas seen: [0.3, 0.5]; surviving data = 0.3
+logs/20260402_120434/qnli_fedavg	SKIP	UNKNOWN	none	no wandb match (older pre-instrumented run)
+logs/20260406_180329_ai2/qnli_fedsa	SKIP	UNKNOWN	none	no wandb match (older pre-instrumented run)
+logs/20260406_180329_ai2/sst2_fedsa	SKIP	UNKNOWN	none	no wandb match (older pre-instrumented run)
