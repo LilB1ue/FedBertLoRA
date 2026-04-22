@@ -36,7 +36,7 @@ METHODS: dict[str, dict[str, list]] = {
         "sst2": [
             ("FedAvg",         "20260402_132128_fedavg_a0.5",      "sst2_fedavg_a0.5",      "#1f77b4", "-", None),
             ("FedSA",          "20260405_071932_fedsa_a0.5",       "sst2_fedsa_a0.5",       "#2ca02c", "-", None),
-            ("FFA",            "20260416_064902_ffa_a0.5",         "sst2_ffa_a0.5",         "#d62728", "-", "server-only"),
+            ("FFA",            "20260420_120302_ffa_a0.5",         "sst2_ffa_a0.5",         "#d62728", "-", None),
             ("FedALC-AP",      "20260406_203614_fedalc_a0.5",      "sst2_fedalc_a0.5",      "#9467bd", "-", None),
             ("FedALC-AP-LWC",  "20260415_063849_fedalc-lwc_a0.5",  "sst2_fedalc-lwc_a0.5",  "#ff7f0e", "--", None),
         ],
@@ -102,7 +102,11 @@ def plot_metric_curves(alpha: str, task: str, metric: str, out_path: Path) -> li
             summary.append((name, None, None, None, note or "missing"))
             continue
         stats = per_round_stats(df)
-        label = name + (f" ({note})" if note else "")
+        best_idx = stats[metric].idxmax()
+        best = stats.loc[best_idx, metric]
+        best_round = int(stats.loc[best_idx, "round"])
+        last = stats[metric].iloc[-1]
+        label = f"{name}{' (' + note + ')' if note else ''}  best={best*100:.2f}%@R{best_round}"
         ax.plot(stats["round"], stats[metric] * 100,
                 label=label, color=colour, linestyle=style, linewidth=1.8)
         if metric == "unweighted":
@@ -110,10 +114,13 @@ def plot_metric_curves(alpha: str, task: str, metric: str, out_path: Path) -> li
                             (stats[metric] - stats["std"]) * 100,
                             (stats[metric] + stats["std"]) * 100,
                             color=colour, alpha=0.08)
-        best_idx = stats[metric].idxmax()
-        best = stats.loc[best_idx, metric]
-        best_round = int(stats.loc[best_idx, "round"])
-        last = stats[metric].iloc[-1]
+        # Mark best-round peak
+        ax.scatter([best_round], [best * 100], color=colour, s=70,
+                   marker="*", edgecolors="black", linewidths=0.8, zorder=5)
+        ax.annotate(f"R{best_round}",
+                    xy=(best_round, best * 100),
+                    xytext=(4, 4), textcoords="offset points",
+                    fontsize=8, color=colour, fontweight="bold")
         summary.append((name, best * 100, best_round, last * 100, note or ""))
 
     ax.set_xlabel("Round")
@@ -208,11 +215,12 @@ def main() -> None:
                                      PLOTS_DIR / f"all_methods_unweighted_{task}_a{alpha}.png")
             w = plot_metric_curves(alpha, task, "weighted",
                                    PLOTS_DIR / f"all_methods_weighted_{task}_a{alpha}.png")
-            plot_best_bar_combined(alpha, task, unw, w,
-                                   PLOTS_DIR / f"all_methods_best_bar_{task}_a{alpha}.png")
+            # Bar plot skipped per project preference (plots/README.md: line + box only).
+            # plot_best_bar_combined stays defined in case needed later.
+            _ = (unw, w)
             plot_perclient_distribution(alpha, task,
                                         PLOTS_DIR / f"all_methods_perclient_{task}_a{alpha}.png")
-    print("\nDone. Plots in plots/r30_c30/all_methods_{unweighted,weighted,best_bar,perclient}_*.png")
+    print("\nDone. Plots in plots/r30_c30/all_methods_{unweighted,weighted,perclient}_*.png (bar plot type archived)")
 
 
 if __name__ == "__main__":
