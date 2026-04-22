@@ -38,7 +38,9 @@ Server-side `server_eval.tsv` 取 parameter average 做 eval，對 personalized 
 | FedSA | 93.72 | 17 | 95.20 | 17 |
 | FedALC-AP | 93.33 | 25 | **95.47** | 26 |
 | FedALC-AP-LWC | 93.32 | 13 | 95.22 | 20 |
-| FFA | no client log (α=0.5 被 α=0.3 覆蓋) | — | — | — |
+| FFA | 94.06 | 13 | 94.30 | 17 |
+
+> FFA α=0.5 SST-2 已重跑（`logs/20260420_120302_ffa_a0.5/sst2_ffa_a0.5/`），client-side eval 補齊。
 
 **QNLI**
 
@@ -48,7 +50,9 @@ Server-side `server_eval.tsv` 取 parameter average 做 eval，對 personalized 
 | FedALC-AP | 92.55 | 27 | **93.85** | 29 |
 | FedAvg | 92.16 | 14 | 91.90 | 13 |
 | FedSA | 89.94 | 17 | 92.43 | 17 |
-| FFA | no client log | — | — | — |
+| FFA | **gap — 僅 server_eval reconstructed** | — | — | — |
+
+> FFA α=0.5 QNLI client-side 仍缺：`logs/20260416_064902_ffa_a0.5/qnli_ffa_a0.5/` 只有 `RECONSTRUCTED_FROM_WANDB.txt` + `server_eval.tsv`，沒 `eval_metrics.tsv`。需要重跑一次才能補齊 α=0.5 QNLI 比較。
 
 ### 圖表
 
@@ -127,12 +131,12 @@ Server-side `server_eval.tsv` 取 parameter average 做 eval，對 personalized 
 - **FedAvg 差 0.99%** → 相對公平
 - **Paper 賣點 trade-off**：FedALC-AP 總 accuracy 高但不太公平；FFA 公平但總 accuracy 低
 
-### 🔧 Finding 5 — FFA α=0.5 client-side data 永久遺失
+### 🔧 Finding 5 — FFA α=0.5 client-side 部分遺失（SST-2 已補、QNLI 仍缺）
 
 - FFA α=0.3 overwrite 了 α=0.5 的整個 log dir（fit_metrics + eval_metrics + checkpoints）
 - wandb `output.log` 只有 `[Server]` 印出（server-side eval），沒 per-client 印出
-- **必須重跑 FFA α=0.5** 才能補完 comparison
-- 之後才能完成 α=0.5 的完整比較
+- **SST-2**：已於 2026-04-20 重跑（`logs/20260420_120302_ffa_a0.5/sst2_ffa_a0.5/`），client-side 補齊（uw 94.06 / w 94.30）
+- **QNLI**：仍需重跑一次，才能完成 α=0.5 完整比較
 
 ### 🔬 Finding 6 — α=0.3 unweighted 的絕對值比 α=0.5 還高（SST-2）
 

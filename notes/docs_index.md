@@ -18,10 +18,8 @@
 
 | 文件 | 說明 |
 |------|------|
-| [research_plan.md](plans/research_plan.md) | FedALC-LoRA 三階段研究規劃（Phase 1-3） |
 | [next_steps.md](plans/next_steps.md) | 下一步行動（指向最新 action plan） |
 | [fedalc_ap_multi_action_plan.md](plans/fedalc_ap_multi_action_plan.md) | **當前**：git commit 策略 + single-task 實驗計畫 (P0-P4) |
-| [fedalc_lwc_design.md](plans/fedalc_lwc_design.md) | FedALC-AP-LWC 設計歷史（寫於 rename 前，原名 FedALC-LWC） |
 
 ## implementation/ — 實作細節
 
@@ -39,6 +37,7 @@
 | [why_local_classifier.md](concepts/why_local_classifier.md) | 為什麼 classifier 要留本地不聚合（gradient 分析、經典論文） |
 | [clustering_methods_comparison.md](concepts/clustering_methods_comparison.md) | Related work 的 clustering 方法比較（AP/Agglomerative/Spectral + similarity metric） |
 | [evaluation_metrics.md](concepts/evaluation_metrics.md) | 評估指標說明：資料切分、evaluate vs server accuracy、FedALC server_eval 問題 |
+| [eval_weighting_convention.md](concepts/eval_weighting_convention.md) | Weighted vs unweighted mean 的 paper 慣例調查 + 本專案為何選 unweighted primary |
 | [fedalc_naming_convention.md](concepts/fedalc_naming_convention.md) | FedALC-AP / FedALC-AP-LWC / FedALC-AP-Multi 命名規則：family 結構、variant 定位、ablation 設計 |
 
 ## experiments/ — 實驗數據
@@ -50,10 +49,9 @@
 | [data_distribution_30clients.md](experiments/data_distribution_30clients.md) | 全 GLUE 任務資料分佈分析（30 clients, α=0.5） |
 | [fedavg_results.md](experiments/fedavg_results.md) | FedAvg 實驗結果（30 clients, 20 rounds, 全 GLUE 任務） |
 | [fedavg_vs_fedsa_comparison.md](experiments/fedavg_vs_fedsa_comparison.md) | FedAvg vs FedSA-LoRA 完整比較（accuracy 表格 + 曲線圖） |
-| [fedalc_lwc_results.md](experiments/fedalc_lwc_results.md) | FedALC-AP-LWC 實驗結果（寫於 rename 前，舊名 FedALC-LWC）：warm-up 失敗分析 |
-| [fedalc_vs_lwc_comparison.md](experiments/fedalc_vs_lwc_comparison.md) | FedALC-AP vs AP-LWC 比較實驗設計（寫於 rename 前） |
-| [fedalc_vs_lwc_no_warmup_results.md](experiments/fedalc_vs_lwc_no_warmup_results.md) | FedALC-AP vs AP-LWC（無 warm-up）SST-2 結果（寫於 rename 前） |
-| [findings_summary.md](experiments/findings_summary.md) | 實驗 Findings 總結：8 個 key findings + 6 個優先度排序的下一步（寫於 rename 前） |
+| [fedalc_vs_lwc_no_warmup_results.md](experiments/fedalc_vs_lwc_no_warmup_results.md) | FedALC-AP vs AP-LWC（無 warm-up）SST-2 結果 |
+| [ap_vs_lwc_clustering_deepdive.md](experiments/ap_vs_lwc_clustering_deepdive.md) | 從 clustering.jsonl 直接比 AP vs LWC 的 cluster structure（QNLI 粒度差很多、accuracy 卻沒升） |
+| [all_methods_comparison.md](experiments/all_methods_comparison.md) | 當前 main comparison（client-side eval, α=0.3 + α=0.5） |
 
 ## 專案文件（根目錄）
 
@@ -61,3 +59,13 @@
 |------|------|
 | [README.md](../README.md) | 專案基本說明 |
 | [CLAUDE.md](../CLAUDE.md) | Claude Code 使用指引、架構設計、常用指令 |
+
+## 活動紀錄
+
+| 文件 | 說明 |
+|------|------|
+| [ACTIVITY.md](ACTIVITY.md) | 本 repo 的 notes / plots / methods / tooling 變更日誌（newest first） |
+
+## 歸檔（見 [_archived/](./_archived/)）
+
+已搬入 `_archived/` 的過時筆記（5 份 notes + 舊 log.md，2026-04-21）。不在主表維護，需要時見 [`_archived/README.md`](./_archived/README.md) 了解各檔過時原因。
