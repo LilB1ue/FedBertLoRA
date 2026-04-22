@@ -7,11 +7,14 @@
 
 | File | 一句話摘要 |
 |---|---|
+| [git_permission.md](git_permission.md) | **必讀**：git add / commit / push 一律先問使用者同意 |
 | [evaluation_metric.md](evaluation_metric.md) | 比較 FL methods 用 client-side eval_metrics.tsv，不用 server-side server_eval.tsv |
 | [log_directory_layout.md](log_directory_layout.md) | `logs/{ts}_{mode}_a{alpha}/{task}_{mode}_a{alpha}/` — 外層 batch dir 自描述 |
 | [commit_format.md](commit_format.md) | Conventional commits（feat/fix/refactor/docs），scope 分開 commit |
-| [experiment_scope.md](experiment_scope.md) | Single-task 只做 sanity check，paper main result 留給 multi-task |
 | [fedalc_family.md](fedalc_family.md) | FedALC-AP / AP-LWC / AP-Multi 命名規則 + variant 定位 |
+
+> **Deprecated rules**（不列入主清單，保留檔案作歷史參考）：
+> - `_deprecated_experiment_scope.md`（2026-04-20 廢棄）— 原 "single-task sanity only, main = multi-task"，因投稿策略改為 single-task primary 而廢棄
 
 ## 維護規則
 

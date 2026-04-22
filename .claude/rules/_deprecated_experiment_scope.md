@@ -1,4 +1,15 @@
-# Rule: Single-task 只做 sanity check，main result 留給 multi-task
+# [DEPRECATED 2026-04-20] Rule: Single-task 只做 sanity check，main result 留給 multi-task
+
+> **Deprecated reason**：投稿策略調整 — 目標改為非頂會投稿，single-task 結果（尤其 α=0.3 下 FedALC vs FedSA 在 QNLI +4%、SST-2 +1.5%）直接當 paper main result。Multi-task 移到 future work 一段話帶過。
+>
+> **此 rule 廢棄後影響**：
+> - Single-task 可跑完整 ablation + 多 seeds（原本禁止）
+> - α=0.3 的 signal 已被驗證為 non-noise，不再只是 sanity
+> - FedALC-AP-Multi 的 component（Hopkins / cumulative ΔB / layer selection）仍在 single-task 下效果弱 — 這個**觀察本身仍有效**，只是不再作為「不跑 ablation」的理由
+>
+> **保留此檔的原因**：未來若回頭做 multi-task 延伸，原 Why 段對 component 在 multi-task 的預期信號描述仍有參考價值。
+
+---
 
 ## Rule
 

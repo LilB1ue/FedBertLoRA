@@ -5,10 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## ⚠ Project rules（先讀）
 
 專案的**行為規則** (dos / don'ts) 存在 [`.claude/rules/`](.claude/rules/INDEX.md)：
+- [git_permission](.claude/rules/git_permission.md) — **先問**再 git add / commit / push
 - [evaluation_metric](.claude/rules/evaluation_metric.md) — client-side eval，不用 server-side
 - [log_directory_layout](.claude/rules/log_directory_layout.md) — `logs/{ts}_{mode}_a{alpha}/{task}_{mode}_a{alpha}/`
 - [commit_format](.claude/rules/commit_format.md) — conventional commits + scope 分開
-- [experiment_scope](.claude/rules/experiment_scope.md) — single-task sanity only，main = multi-task
 - [fedalc_family](.claude/rules/fedalc_family.md) — AP / AP-LWC / AP-Multi 命名
 
 ## 專案概述
