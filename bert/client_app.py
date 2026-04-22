@@ -23,7 +23,8 @@ class FlowerClient(NumPyClient):
                  lr_scheduler_type: str = "constant", logging_steps: int = 10,
                  task_name: str = "sst2", checkpoint_dir: str = None,
                  seed: int = 42, log_dir: str = "logs",
-                 aggregation_mode: str = "fedavg"):
+                 aggregation_mode: str = "fedavg",
+                 dirichlet_alpha: float = 0.5):
         self.net = net
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
@@ -42,6 +43,10 @@ class FlowerClient(NumPyClient):
         self.seed = seed
         self.log_dir = log_dir
         self.aggregation_mode = aggregation_mode
+        self.dirichlet_alpha = dirichlet_alpha
+        # Matches server_app.py batch_dir layout:
+        #   logs/<ts>_<mode>_a<alpha>/<task>_<mode>_a<alpha>/
+        self._alpha_tag = f"_a{float(dirichlet_alpha)}"
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net.to(self.device)
 
@@ -53,9 +58,10 @@ class FlowerClient(NumPyClient):
 
         # Save received (post-aggregation) adapter for non-fedavg strategies
         if self.aggregation_mode != "fedavg" and log_timestamp:
+            batch_dir = f"{log_timestamp}_{self.aggregation_mode}{self._alpha_tag}"
+            run_subdir = f"{self.task_name}_{self.aggregation_mode}{self._alpha_tag}"
             recv_dir = os.path.join(
-                self.log_dir, log_timestamp,
-                f"{self.task_name}_{self.aggregation_mode}",
+                self.log_dir, batch_dir, run_subdir,
                 "received_checkpoints",
                 f"round_{current_round}", f"client_{self.partition_id}",
             )
@@ -106,8 +112,10 @@ class FlowerClient(NumPyClient):
 
         # Save per-client LoRA checkpoint (trained, before aggregation) — all strategies
         if log_timestamp:
+            batch_dir = f"{log_timestamp}_{self.aggregation_mode}{self._alpha_tag}"
+            run_subdir = f"{self.task_name}_{self.aggregation_mode}{self._alpha_tag}"
             ckpt_dir = os.path.join(
-                self.log_dir, log_timestamp, f"{self.task_name}_{self.aggregation_mode}", "client_checkpoints"
+                self.log_dir, batch_dir, run_subdir, "client_checkpoints"
             )
         else:
             ckpt_dir = self.checkpoint_dir
@@ -182,7 +190,10 @@ def client_fn(context: Context):
     log_dir = str(cfg.get("log-dir", "logs"))
     aggregation_mode = str(cfg.get("aggregation-mode", "fedavg"))
     log_timestamp = str(cfg.get("log-timestamp", ""))
-    checkpoint_dir = os.path.join(log_dir, log_timestamp, f"{task_name}_{aggregation_mode}", "client_checkpoints")
+    alpha_tag = f"_a{dirichlet_alpha}"
+    batch_dir = f"{log_timestamp}_{aggregation_mode}{alpha_tag}"
+    run_subdir = f"{task_name}_{aggregation_mode}{alpha_tag}"
+    checkpoint_dir = os.path.join(log_dir, batch_dir, run_subdir, "client_checkpoints")
 
     set_seed(seed)
 
@@ -229,6 +240,7 @@ def client_fn(context: Context):
         seed=seed,
         log_dir=log_dir,
         aggregation_mode=aggregation_mode,
+        dirichlet_alpha=dirichlet_alpha,
     ).to_client()
 
 
