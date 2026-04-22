@@ -17,6 +17,7 @@ from bert.fedsa_strategy import FedSALoRAStrategy
 from bert.fedalc_ap_strategy import FedALCAPStrategy
 from bert.fedalc_ap_lwc_strategy import FedALCAPLWCStrategy
 from bert.fedalc_ap_multi_strategy import FedALCAPMultiStrategy
+from bert.fedalc_agglo_lwc_strategy import FedALCAggloLWCStrategy
 
 
 def get_metrics_aggregation_fn(log_path, phase, use_wandb=False):
@@ -355,6 +356,22 @@ def server_fn(context: Context):
             layer_reselect_every=int(cfg.get("layer-reselect-every", 1)),
             layer_score_feature=str(cfg.get("layer-score-feature", "cumulative_delta_b")),
             **common_kwargs,
+        )
+    elif aggregation_mode == "fedalc-agglo-lwc":
+        # Skip server-side centralized eval (meaningless for personalized FL; see
+        # .claude/rules/evaluation_metric.md). Filter evaluate_fn out of common_kwargs.
+        common_kwargs_no_eval = {k: v for k, v in common_kwargs.items() if k != "evaluate_fn"}
+        strategy = FedALCAggloLWCStrategy(
+            lora_param_keys=lora_param_keys,
+            use_wandb=wandb_enabled,
+            log_dir=log_subdir,
+            warmup_rounds=int(cfg.get("warmup-rounds", 5)),
+            k_min=int(cfg.get("agglo-k-min", 2)),
+            k_max=int(cfg.get("agglo-k-max", 10)),
+            agglo_linkage=str(cfg.get("agglo-linkage", "average")),
+            agglo_min_silhouette=float(cfg.get("agglo-min-silhouette", 0.0)),
+            layer_selection_k=int(cfg.get("layer-selection-k", 10)),
+            **common_kwargs_no_eval,
         )
     else:
         strategy = FedSALoRAStrategy(

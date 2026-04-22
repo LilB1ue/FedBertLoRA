@@ -61,7 +61,7 @@ logging-steps = 10
 log-dir = "logs"
 log-timestamp = ""
 
-# Strategy: "fedavg" | "fedsa" | "ffa" | "fedalc-ap" | "fedalc-ap-lwc" | "fedalc-ap-multi"
+# Strategy: "fedavg" | "fedsa" | "ffa" | "fedalc-ap" | "fedalc-ap-lwc" | "fedalc-ap-multi" | "fedalc-agglo-lwc"
 aggregation-mode = "fedsa"
 
 # FedALC-AP-LWC parameters (also reused by FedALC-AP-Multi for built-in layer selection)
@@ -75,6 +75,13 @@ hopkins-threshold = 0.75                      # Exit warm-up when Hopkins H > th
 warmup-max-rounds = 10                        # Hard cap on warm-up length
 freeze-stable-rounds = 3                      # Freeze when cluster stable for N rounds
 layer-score-feature = "cumulative_delta_b"    # Layer scoring feature: "cumulative_delta_b" | "current_b"
+
+# FedALC-Agglo-LWC parameters (fixed E-round FedSA warm-up → R_E cluster+freeze)
+warmup-rounds = 5                             # Phase 0 length (FedSA warm-up rounds before cluster+freeze)
+agglo-k-min = 2                               # Agglomerative K sweep lower bound
+agglo-k-max = 10                              # Agglomerative K sweep upper bound
+agglo-linkage = "average"                     # "average" | "complete" | "single" (ward rejected — requires Euclidean)
+agglo-min-silhouette = 0.0                    # If best sweep sil < this → fallback to K=1
 
 # Wandb (FL client logging)
 wandb-enabled = false
