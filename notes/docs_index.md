@@ -51,6 +51,8 @@
 | [fedavg_vs_fedsa_comparison.md](experiments/fedavg_vs_fedsa_comparison.md) | FedAvg vs FedSA-LoRA 完整比較（accuracy 表格 + 曲線圖） |
 | [fedalc_vs_lwc_no_warmup_results.md](experiments/fedalc_vs_lwc_no_warmup_results.md) | FedALC-AP vs AP-LWC（無 warm-up）SST-2 結果 |
 | [ap_vs_lwc_clustering_deepdive.md](experiments/ap_vs_lwc_clustering_deepdive.md) | 從 clustering.jsonl 直接比 AP vs LWC 的 cluster structure（QNLI 粒度差很多、accuracy 卻沒升） |
+| [label_skew_singleton_analysis.md](experiments/label_skew_singleton_analysis.md) | QNLI α=0.5 singleton 成因分析：pid_16 有 inverse label marginal（99.5% label_1 vs 其他高 acc client 99%+ label_0）→ B 方向相反 → 必然 singleton |
+| [data_distribution_tables.md](experiments/data_distribution_tables.md) | 四張 per-client data 分布表（SST-2/QNLI × α=0.3/0.5），含 train/test size + label counts + ratio + extreme client 標示 |
 | [all_methods_comparison.md](experiments/all_methods_comparison.md) | 當前 main comparison（client-side eval, α=0.3 + α=0.5） |
 
 ## 專案文件（根目錄）
