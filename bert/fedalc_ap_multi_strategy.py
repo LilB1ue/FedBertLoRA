@@ -76,6 +76,13 @@ from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.neighbors import NearestNeighbors
 
+from bert.lora_utils import (
+    compute_layer_scores,
+    reconstruct_parameters,
+    separate_a_b_others,
+    weighted_average,
+)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -262,43 +269,6 @@ class FedALCAPMultiStrategy(FedAvg):
             f"score_feature={layer_score_feature})"
         )
 
-    # ── Shared utilities ──
-
-    def _separate_a_b_others(self, parameters):
-        a_params, b_params, other_params = [], [], []
-        for key, param in zip(self.lora_param_keys, parameters):
-            if "lora_A" in key:
-                a_params.append(param)
-            elif "lora_B" in key:
-                b_params.append(param)
-            else:
-                other_params.append(param)
-        return a_params, b_params, other_params
-
-    def _reconstruct_parameters(self, a_params, b_params, other_params):
-        result = []
-        a_idx, b_idx, o_idx = 0, 0, 0
-        for key in self.lora_param_keys:
-            if "lora_A" in key:
-                result.append(a_params[a_idx]); a_idx += 1
-            elif "lora_B" in key:
-                result.append(b_params[b_idx]); b_idx += 1
-            else:
-                result.append(other_params[o_idx]); o_idx += 1
-        return result
-
-    @staticmethod
-    def _weighted_average(matrix_lists, weights):
-        total = float(sum(weights))
-        if total == 0:
-            return [mat.copy() for mat in matrix_lists[0]] if matrix_lists else []
-        factors = [w / total for w in weights]
-        aggregated = [mat.copy() * factors[0] for mat in matrix_lists[0]]
-        for i, mats in enumerate(matrix_lists[1:], start=1):
-            for j, mat in enumerate(mats):
-                aggregated[j] += mat * factors[i]
-        return aggregated
-
     # ── Cumulative ΔB tracking ──
 
     def _update_cumulative_delta_b(
@@ -347,30 +317,6 @@ class FedALCAPMultiStrategy(FedAvg):
             source.append(delta_b)
         return source
 
-    # ── Layer selection (Metric B = dissim × norm) ──
-
-    def _compute_layer_scores(
-        self, per_client_layers: List[List[np.ndarray]]
-    ) -> List[float]:
-        """Metric B per layer: (1 - mean pairwise cosine sim) × mean Frobenius norm.
-
-        Higher score = layer where clients disagree strongly *and* have nontrivial
-        magnitude. Used to pick top-K layers for downstream Hopkins / AP.
-        """
-        n_layers = len(per_client_layers[0])
-        scores: List[float] = []
-        for l in range(n_layers):
-            vecs = np.stack([c[l].flatten() for c in per_client_layers])
-            sim = cosine_similarity(vecs)
-            mask = np.triu(np.ones(sim.shape, dtype=bool), k=1)
-            if mask.sum() == 0:
-                dissim = 0.0
-            else:
-                dissim = float(1.0 - sim[mask].mean())
-            avg_norm = float(np.mean([np.linalg.norm(c[l]) for c in per_client_layers]))
-            scores.append(dissim * avg_norm)
-        return scores
-
     def _maybe_reselect_layers(
         self,
         client_b_list: List[List[np.ndarray]],
@@ -394,7 +340,7 @@ class FedALCAPMultiStrategy(FedAvg):
             return
 
         source = self._get_layer_score_source(client_b_list, client_cids)
-        scores = self._compute_layer_scores(source)
+        scores = compute_layer_scores(source)
 
         k = min(self.layer_selection_k, len(scores))
         top_k = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
@@ -526,7 +472,7 @@ class FedALCAPMultiStrategy(FedAvg):
             member_indices = [client_cids.index(cid) for cid in member_cids]
             cluster_b = [client_b_list[i] for i in member_indices]
             cluster_w = [client_weights[i] for i in member_indices]
-            agg_b = self._weighted_average(cluster_b, cluster_w)
+            agg_b = weighted_average(cluster_b, cluster_w)
             for cid in member_cids:
                 client_b_aggregated[cid] = agg_b
 
@@ -639,7 +585,9 @@ class FedALCAPMultiStrategy(FedAvg):
 
         for client, fit_res in results:
             ndarrays = parameters_to_ndarrays(fit_res.parameters)
-            a_params, b_params, other_params = self._separate_a_b_others(ndarrays)
+            a_params, b_params, other_params = separate_a_b_others(
+                ndarrays, self.lora_param_keys
+            )
             client_a_list.append(a_params)
             client_b_list.append(b_params)
             client_other_list.append(other_params)
@@ -649,16 +597,16 @@ class FedALCAPMultiStrategy(FedAvg):
             fit_metrics_list.append((fit_res.num_examples, fit_res.metrics))
 
         # A: always global
-        agg_a = self._weighted_average(client_a_list, client_weights)
+        agg_a = weighted_average(client_a_list, client_weights)
         self.global_a_matrices = agg_a
 
         # Others: always local
         for cid, oth in zip(client_cids, client_other_list):
             self.client_others[cid] = oth
-        self.global_others = self._weighted_average(client_other_list, client_weights)
+        self.global_others = weighted_average(client_other_list, client_weights)
 
         # Global B avg (for server eval fallback)
-        self.global_b_matrices = self._weighted_average(client_b_list, client_weights)
+        self.global_b_matrices = weighted_average(client_b_list, client_weights)
 
         # Update cumulative ΔB in every phase (Phase 2 keeps it updated for
         # drift observation even though clustering itself is frozen)
@@ -802,7 +750,7 @@ class FedALCAPMultiStrategy(FedAvg):
                 member_indices = [client_cids.index(cid) for cid in member_cids]
                 cluster_b = [client_b_list[i] for i in member_indices]
                 cluster_w = [client_weights[i] for i in member_indices]
-                agg_b = self._weighted_average(cluster_b, cluster_w)
+                agg_b = weighted_average(cluster_b, cluster_w)
                 for cid in member_cids:
                     client_b_aggregated[cid] = agg_b
 
@@ -859,8 +807,8 @@ class FedALCAPMultiStrategy(FedAvg):
             )
 
         # Server eval global params
-        combined = self._reconstruct_parameters(
-            agg_a, self.global_b_matrices, self.global_others
+        combined = reconstruct_parameters(
+            agg_a, self.global_b_matrices, self.global_others, self.lora_param_keys
         )
 
         # Aggregate metrics
@@ -901,8 +849,8 @@ class FedALCAPMultiStrategy(FedAvg):
             client_b = self.client_b_matrices.get(cid, self.global_b_matrices)
             client_oth = self.client_others.get(cid, self.global_others)
 
-            personalized = self._reconstruct_parameters(
-                self.global_a_matrices, client_b, client_oth
+            personalized = reconstruct_parameters(
+                self.global_a_matrices, client_b, client_oth, self.lora_param_keys
             )
             personalized_params = ndarrays_to_parameters(personalized)
             fit_ins_list.append((client, FitIns(personalized_params, dict(config))))
@@ -928,8 +876,8 @@ class FedALCAPMultiStrategy(FedAvg):
             client_b = self.client_b_matrices.get(cid, self.global_b_matrices)
             client_oth = self.client_others.get(cid, self.global_others)
 
-            personalized = self._reconstruct_parameters(
-                self.global_a_matrices, client_b, client_oth
+            personalized = reconstruct_parameters(
+                self.global_a_matrices, client_b, client_oth, self.lora_param_keys
             )
             personalized_params = ndarrays_to_parameters(personalized)
             eval_ins_list.append((client, EvaluateIns(personalized_params, dict(config))))

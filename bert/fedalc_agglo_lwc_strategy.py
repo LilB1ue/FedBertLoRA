@@ -47,7 +47,12 @@ from flwr.common import (
 # params (which would be misleading semantics).
 _EMPTY_PARAMETERS = Parameters(tensors=[], tensor_type="")
 
-from flwr.common.typing import NDArrays
+from bert.lora_utils import (
+    compute_layer_scores,
+    reconstruct_parameters,
+    separate_a_b_others,
+    weighted_average,
+)
 from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.strategy import FedAvg
@@ -133,70 +138,6 @@ class FedALCAggloLWCStrategy(FedAvg):
             f"linkage={agglo_linkage}, layer_k={layer_selection_k}, "
             f"min_sil={agglo_min_silhouette})"
         )
-
-    # ── Copy-adapt from fedalc_ap_lwc_strategy.py ──────────────────────
-
-    def _separate_a_b_others(
-        self, parameters: NDArrays
-    ) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray]]:
-        a_params, b_params, other_params = [], [], []
-        for key, param in zip(self.lora_param_keys, parameters):
-            if "lora_A" in key:
-                a_params.append(param)
-            elif "lora_B" in key:
-                b_params.append(param)
-            else:
-                other_params.append(param)
-        return a_params, b_params, other_params
-
-    def _reconstruct_parameters(
-        self,
-        a_params: List[np.ndarray],
-        b_params: List[np.ndarray],
-        other_params: List[np.ndarray],
-    ) -> NDArrays:
-        result = []
-        a_idx, b_idx, o_idx = 0, 0, 0
-        for key in self.lora_param_keys:
-            if "lora_A" in key:
-                result.append(a_params[a_idx])
-                a_idx += 1
-            elif "lora_B" in key:
-                result.append(b_params[b_idx])
-                b_idx += 1
-            else:
-                result.append(other_params[o_idx])
-                o_idx += 1
-        return result
-
-    @staticmethod
-    def _weighted_average(
-        matrix_lists: List[List[np.ndarray]], weights: List[int]
-    ) -> List[np.ndarray]:
-        total = float(sum(weights))
-        if total == 0:
-            return [mat.copy() for mat in matrix_lists[0]] if matrix_lists else []
-        factors = [w / total for w in weights]
-        aggregated = [mat.copy() * factors[0] for mat in matrix_lists[0]]
-        for i, mats in enumerate(matrix_lists[1:], start=1):
-            for j, mat in enumerate(mats):
-                aggregated[j] += mat * factors[i]
-        return aggregated
-
-    def _compute_layer_scores(
-        self, client_b_list: List[List[np.ndarray]]
-    ) -> List[float]:
-        """Metric B = (1 − mean_cosine_across_clients(B_l)) × mean_‖B_l‖_F."""
-        n_layers = len(client_b_list[0])
-        scores = []
-        for l in range(n_layers):
-            vecs = np.stack([c[l].flatten() for c in client_b_list])
-            sim = cosine_similarity(vecs)
-            mask = np.triu(np.ones(sim.shape, dtype=bool), k=1)
-            dissim = 1.0 - sim[mask].mean()
-            avg_norm = np.mean([np.linalg.norm(c[l]) for c in client_b_list])
-            scores.append(float(dissim * avg_norm))
-        return scores
 
     # ── New: K sweep with Agglomerative ─────────────────────────────────
 
@@ -286,7 +227,9 @@ class FedALCAggloLWCStrategy(FedAvg):
 
         for client, fit_res in results:
             ndarrays = parameters_to_ndarrays(fit_res.parameters)
-            a_params, b_params, other_params = self._separate_a_b_others(ndarrays)
+            a_params, b_params, other_params = separate_a_b_others(
+                ndarrays, self.lora_param_keys
+            )
             client_a_list.append(a_params)
             client_b_list.append(b_params)
             client_other_list.append(other_params)
@@ -298,13 +241,13 @@ class FedALCAggloLWCStrategy(FedAvg):
             fit_metrics_list.append((fit_res.num_examples, fit_res.metrics))
 
         # ── Always: global A + per-client others ──
-        agg_a = self._weighted_average(client_a_list, client_weights)
+        agg_a = weighted_average(client_a_list, client_weights)
         self.global_a_matrices = agg_a
         for cid, o in zip(client_cids, client_other_list):
             self.client_others[cid] = o
         # Fallback globals for clients seen for the first time in later rounds
-        self.global_others = self._weighted_average(client_other_list, client_weights)
-        self.global_b_matrices = self._weighted_average(client_b_list, client_weights)
+        self.global_others = weighted_average(client_other_list, client_weights)
+        self.global_b_matrices = weighted_average(client_b_list, client_weights)
 
         clustering_metrics: Dict[str, Scalar] = {}
 
@@ -338,7 +281,7 @@ class FedALCAggloLWCStrategy(FedAvg):
                 )
 
             # (1) Metric B layer scoring
-            layer_scores = self._compute_layer_scores(client_b_list)
+            layer_scores = compute_layer_scores(client_b_list)
             top_k_idx = sorted(
                 range(len(layer_scores)),
                 key=lambda i: layer_scores[i],
@@ -373,7 +316,7 @@ class FedALCAggloLWCStrategy(FedAvg):
                 idxs = [client_cids.index(c) for c in members]
                 cluster_b = [client_b_list[i] for i in idxs]
                 cluster_w = [client_weights[i] for i in idxs]
-                agg = self._weighted_average(cluster_b, cluster_w)
+                agg = weighted_average(cluster_b, cluster_w)
                 for cid in members:
                     client_b_agg[cid] = agg
             self.client_b_matrices = client_b_agg
@@ -447,7 +390,7 @@ class FedALCAggloLWCStrategy(FedAvg):
                 idxs = [client_cids.index(cid) for cid in members]
                 cluster_b = [client_b_list[i] for i in idxs]
                 cluster_w = [client_weights[i] for i in idxs]
-                agg = self._weighted_average(cluster_b, cluster_w)
+                agg = weighted_average(cluster_b, cluster_w)
                 for cid in members:
                     client_b_agg[cid] = agg
             self.client_b_matrices = client_b_agg
@@ -527,8 +470,8 @@ class FedALCAggloLWCStrategy(FedAvg):
             client_b = self.client_b_matrices.get(cid, self.global_b_matrices)
             client_oth = self.client_others.get(cid, self.global_others)
 
-            personalized = self._reconstruct_parameters(
-                self.global_a_matrices, client_b, client_oth
+            personalized = reconstruct_parameters(
+                self.global_a_matrices, client_b, client_oth, self.lora_param_keys
             )
             personalized_params = ndarrays_to_parameters(personalized)
             fit_ins_list.append((client, FitIns(personalized_params, dict(config))))
@@ -562,8 +505,8 @@ class FedALCAggloLWCStrategy(FedAvg):
             client_b = self.client_b_matrices.get(cid, self.global_b_matrices)
             client_oth = self.client_others.get(cid, self.global_others)
 
-            personalized = self._reconstruct_parameters(
-                self.global_a_matrices, client_b, client_oth
+            personalized = reconstruct_parameters(
+                self.global_a_matrices, client_b, client_oth, self.lora_param_keys
             )
             personalized_params = ndarrays_to_parameters(personalized)
             eval_ins_list.append(

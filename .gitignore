@@ -1,6 +1,6 @@
 # PDF papers
 *.pdf
-
+.vscode
 # Model checkpoints
 checkpoints/
 results/

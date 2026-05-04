@@ -22,13 +22,23 @@ from flwr.common import (
     ndarrays_to_parameters,
     parameters_to_ndarrays,
 )
-from flwr.common.typing import NDArrays
 from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.strategy import FedAvg
 
+from bert.lora_utils import (
+    reconstruct_parameters,
+    separate_a_b_others,
+    weighted_average,
+)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# In FedSA-LoRA the classifier head (and `score` for some heads) stays
+# client-local alongside lora_B, so it is bundled into the "b" list when
+# splitting parameters.
+B_EXTRA_KEYS: Tuple[str, ...] = ("classifier", "score")
 
 
 class FedSALoRAStrategy(FedAvg):
@@ -62,61 +72,6 @@ class FedSALoRAStrategy(FedAvg):
 
         logger.info(f"FedSALoRAStrategy initialized with mode: {aggregation_mode}")
 
-    def _separate_a_b(self, parameters: NDArrays) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray]]:
-        """Separate parameters into A matrices, B matrices + classifier, and other params.
-
-        Uses lora_param_keys for name-based separation.
-        Classifier params are grouped with B (both are client-local in FedSA-LoRA).
-        """
-        a_params = []
-        b_params = []  # includes lora_B + classifier (client-local)
-        other_params = []
-        for key, param in zip(self.lora_param_keys, parameters):
-            if "lora_A" in key:
-                a_params.append(param)
-            elif "lora_B" in key or "classifier" in key or "score" in key:
-                b_params.append(param)
-            else:
-                other_params.append(param)
-        return a_params, b_params, other_params
-
-    def _reconstruct_parameters(
-        self,
-        a_params: List[np.ndarray],
-        b_params: List[np.ndarray],
-        other_params: List[np.ndarray],
-    ) -> NDArrays:
-        """Reconstruct flat parameter array from separated A, B+classifier, and other params."""
-        result = []
-        a_idx, b_idx, o_idx = 0, 0, 0
-        for key in self.lora_param_keys:
-            if "lora_A" in key:
-                result.append(a_params[a_idx])
-                a_idx += 1
-            elif "lora_B" in key or "classifier" in key or "score" in key:
-                result.append(b_params[b_idx])
-                b_idx += 1
-            else:
-                result.append(other_params[o_idx])
-                o_idx += 1
-        return result
-
-    @staticmethod
-    def _weighted_average(
-        matrix_lists: List[List[np.ndarray]], weights: List[int]
-    ) -> List[np.ndarray]:
-        """Compute weighted average of matrix lists."""
-        total = float(sum(weights))
-        if total == 0:
-            return [mat.copy() for mat in matrix_lists[0]] if matrix_lists else []
-
-        factors = [w / total for w in weights]
-        aggregated = [mat.copy() * factors[0] for mat in matrix_lists[0]]
-        for i, mats in enumerate(matrix_lists[1:], start=1):
-            for j, mat in enumerate(mats):
-                aggregated[j] += mat * factors[i]
-        return aggregated
-
     def aggregate_fit(
         self,
         server_round: int,
@@ -138,7 +93,9 @@ class FedSALoRAStrategy(FedAvg):
 
         for client, fit_res in results:
             ndarrays = parameters_to_ndarrays(fit_res.parameters)
-            a_params, b_params, other_params = self._separate_a_b(ndarrays)
+            a_params, b_params, other_params = separate_a_b_others(
+                ndarrays, self.lora_param_keys, b_extra_keys=B_EXTRA_KEYS
+            )
 
             client_a_list.append(a_params)
             client_b_list.append(b_params)
@@ -149,13 +106,13 @@ class FedSALoRAStrategy(FedAvg):
 
         # Aggregate "other" params via FedAvg (if any remain after A/B/classifier separation)
         if client_other_list and client_other_list[0]:
-            agg_other = self._weighted_average(client_other_list, client_weights)
+            agg_other = weighted_average(client_other_list, client_weights)
         else:
             agg_other = []
 
         if self.aggregation_mode == "fedsa":
             # FedSA-LoRA: aggregate A globally, B stays per-client
-            agg_a = self._weighted_average(client_a_list, client_weights)
+            agg_a = weighted_average(client_a_list, client_weights)
             self.global_a_matrices = agg_a
 
             # Store each client's B matrices for next round
@@ -164,16 +121,18 @@ class FedSALoRAStrategy(FedAvg):
 
             # For the returned "global" parameters, use aggregated A + averaged B as fallback
             # (This is used for evaluate_fn; actual client params are personalized in configure_fit)
-            agg_b = self._weighted_average(client_b_list, client_weights)
+            agg_b = weighted_average(client_b_list, client_weights)
             self.global_b_matrices = agg_b
-            combined = self._reconstruct_parameters(agg_a, agg_b, agg_other)
+            combined = reconstruct_parameters(
+                agg_a, agg_b, agg_other, self.lora_param_keys, b_extra_keys=B_EXTRA_KEYS
+            )
 
             logger.info(f"Round {server_round}: FedSA-LoRA — aggregated A ({len(agg_a)} matrices), "
                         f"tracking B for {len(self.client_b_matrices)} clients")
 
         elif self.aggregation_mode == "ffa":
             # FFA-LoRA: aggregate B only, A stays as-is (frozen from init)
-            agg_b = self._weighted_average(client_b_list, client_weights)
+            agg_b = weighted_average(client_b_list, client_weights)
             self.global_b_matrices = agg_b
 
             # A matrices: keep the first client's A (should all be same if frozen)
@@ -181,7 +140,9 @@ class FedSALoRAStrategy(FedAvg):
                 self.global_a_matrices = client_a_list[0]
             agg_a = self.global_a_matrices
 
-            combined = self._reconstruct_parameters(agg_a, agg_b, agg_other)
+            combined = reconstruct_parameters(
+                agg_a, agg_b, agg_other, self.lora_param_keys, b_extra_keys=B_EXTRA_KEYS
+            )
             logger.info(f"Round {server_round}: FFA-LoRA — aggregated B, A frozen")
 
         else:
@@ -231,10 +192,16 @@ class FedSALoRAStrategy(FedAvg):
 
                 # Reconstruct: need "other" params from current global
                 global_arrays = parameters_to_ndarrays(parameters)
-                _, _, other_params = self._separate_a_b(global_arrays)
+                _, _, other_params = separate_a_b_others(
+                    global_arrays, self.lora_param_keys, b_extra_keys=B_EXTRA_KEYS
+                )
 
-                personalized = self._reconstruct_parameters(
-                    self.global_a_matrices, client_b, other_params
+                personalized = reconstruct_parameters(
+                    self.global_a_matrices,
+                    client_b,
+                    other_params,
+                    self.lora_param_keys,
+                    b_extra_keys=B_EXTRA_KEYS,
                 )
                 personalized_params = ndarrays_to_parameters(personalized)
                 fit_ins = FitIns(personalized_params, dict(config))
@@ -277,10 +244,16 @@ class FedSALoRAStrategy(FedAvg):
                     continue
 
                 global_arrays = parameters_to_ndarrays(parameters)
-                _, _, other_params = self._separate_a_b(global_arrays)
+                _, _, other_params = separate_a_b_others(
+                    global_arrays, self.lora_param_keys, b_extra_keys=B_EXTRA_KEYS
+                )
 
-                personalized = self._reconstruct_parameters(
-                    self.global_a_matrices, client_b, other_params
+                personalized = reconstruct_parameters(
+                    self.global_a_matrices,
+                    client_b,
+                    other_params,
+                    self.lora_param_keys,
+                    b_extra_keys=B_EXTRA_KEYS,
                 )
                 personalized_params = ndarrays_to_parameters(personalized)
                 eval_ins_list.append((client, EvaluateIns(personalized_params, dict(config))))
