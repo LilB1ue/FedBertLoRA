@@ -12,6 +12,57 @@
 
 ---
 
+## [2026-05-04] meta | LR schedule design 調查 + paper notes 修正
+
+**Files changed**：
+- `notes/papers/related_papers.md`：修正 FedSA-LoRA「local epochs=10」→「10 batches (corrected)」,加上「Optimizer: SGD lr=0.02, no scheduler/no warmup」(查官方 yaml + FederatedScope defaults 確認);FedADC 條目補 cosine schedule 措辭註解(p.9 原文 "decays according to a cosine scheduler",最自然解讀是 within-round HF cosine,但 paper 沒釋出 code 無法 100% 確認)
+- `notes/plans/next_steps.md`：新增 Task 6 (deferred) — LR schedule ablation (C1 vs C2 × α=0.3/0.5),paper appendix 用
+
+**Why**：討論「FL LR schedule 該怎麼選」,從質疑現行 C1(cross-round cosine + within-round constant)「不是 LoRA 標準」開始,逐層查證後修正了 4 個 framing 錯誤:
+1. **「LoRA 標準 = cosine + warmup」不正確** — 原 LoRA paper(microsoft/LoRA RoBERTa-large SST-2)用 **linear + warmup_ratio=0.06, lr=4e-4**,不是 cosine
+2. **「FedSA-LoRA 用 10 epochs」不正確** — 官方 yaml 是 `local_update_steps: 10` + `batch_or_epoch: batch`,實際是 10 batches (= 10 optimizer steps);加上他們是 SGD constant LR,沒 scheduler 沒 warmup
+3. **「C1 跟 FedADC 對齊」不正確** — FedADC paper 措辭最自然解讀是 **within-round cosine**(C2),不是 round-level cosine。所以 C1 是 Flower SFT template 獨有設計,沒 paper 直接對應
+4. **「FL+LoRA 圈有 LR schedule convention」不成立** — paper 圈普遍 SGD constant 居多,沒人 ablate 過 within-round vs across-round cosine 差異
+
+**核心發現** — within-round cosine(任何衰到 0 的 schedule)會 hurt 小 client:
+- 200-example client(2 steps):step 0=peak, step 1≈0 → **50% step 浪費**
+- 5000-example client(39 steps):末段 ~3 step 浪費 → ~8%
+- C1 對所有 client 中性,**Flower template 巧合地是對 small client 最 friendly 的設計**
+
+**衍生發現**:AdamW 在 FL 下的結構性問題 — optimizer state(m, v)每 round Trainer 重建時 reset → 第 1-3 step 不穩定。Centralized 用 warmup 補償,FL 1 epoch + 17 step 沒空間 warmup。FedSA-LoRA 用 SGD 直接迴避這個問題。真解法是 FedOpt/FedAdam(server-side momentum),不在當前 plan 範圍。
+
+**Decision**:
+- **不改現行 config**(C1 維持),理由:對 small client 友善 + 跟 Flower template 對齊 + 改了會 invalidate 既有 baseline 結果
+- **C1 vs C2 ablation 列為 deferred future work**(`next_steps.md` Task 6),paper appendix 用
+
+**Follow-up**：
+- 未來若需要 ablate(paper appendix),`pyproject.toml` 切 `lr-schedule="constant"` + `lr-scheduler-type="cosine"` 即可,**0 行 code change**
+- 若要從根本解決 AdamW state reset → 實作 FedOpt-style server-side optimizer(較大改動,paper extension scope)
+- 完整討論記錄在 `~/.claude/plans/lora-buzzing-seal.md`(plan v4)
+
+---
+
+## [2026-04-24] experiment | Singleton 成因驗證 + label 分布 dump tool
+
+**Files added**：
+- `tools/dump_partition_stats.py`：per-partition stats dump tool（train/test size + label counts + ratios）。Output JSON + TSV，跟 `bert/dataset.py` 共用 Dirichlet + seeded split，保證跟 FL 訓練實際 seen 的分布一致
+- `logs/partition_stats/qnli_c30_a0.5_s42.{json,tsv}`：QNLI α=0.5 完整 30 partition stats
+- `notes/experiments/label_skew_singleton_analysis.md`：singleton 成因分析
+
+**Why**：長期追蹤的 QNLI α=0.5 structural singleton (`pid_16` 全 30 輪孤立) 謎團解開 — **pid_16 的 label marginal 是 99.5% label_1，而其他高 accuracy client (pid_1/9/20) 是 99%+ label_0**。label 相反 → LoRA-B 學出反向分類器 → cosine(B) ≈ 負 → AP / Agglomerative 都會把它判為 outlier → singleton 是**結構性正確**，不是 clustering bug。
+
+**Implication**：
+- Singleton = feature not bug（在 inverse label marginal 的情境下）
+- 強制 `min_cluster_size=2` merge to nearest 會把 pid_16 塞進 label_0 cluster → cluster-averaged B 正負相消 → pid_16 accuracy 預計從 99.5% 掉到 ~50-60%（未驗證）
+- Paper 立場：personalized FL 下 singleton 是正確的 personalization decision
+
+**Follow-up**：
+- 跑剩 3 組：`for t in sst2 qnli; do for a in 0.3 0.5; do python tools/dump_partition_stats.py --task $t --alpha $a; done; done`
+- 實測 min_cluster_size=2 merge 對 pid_16 accuracy 的代價
+- `docs_index.md` 已加條目
+
+---
+
 ## [2026-04-21] add-note | FedALC-AP 三變體同異比較
 
 **Files added**：

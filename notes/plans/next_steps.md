@@ -245,6 +245,47 @@ Layer-wise 在 single task 下的可能性：
 
 Agglomerative + per-cluster A+B 聚合（無 MoE）。最重要的 Tier 2 baseline。
 
+### Task 6 (deferred): LR Schedule Ablation — within-round constant vs cosine
+
+**狀態**：2026-05-04 deferred,優先 strategy ablation,LR schedule 不是 paper 主軸
+
+**動機**：
+
+現行設定是 **C1: cross-round cosine + within-round constant**（Flower SFT template default）。但 FedADC（最像我們 setup 的 paper）p.9 寫 "the local learning rate is set to 0.001 and decays according to a cosine scheduler",最自然解讀是 **C2: within-round step-level cosine**（HF Trainer `lr_scheduler_type="cosine"`）。所以 C1 vs C2 哪個對 personalized FL+LoRA 更好,**是個沒人 ablate 過的開放問題**。
+
+**Hypothesis**：
+
+C2(within-round cosine)hurt 小 client。具體分析:
+- 200-example client（2 steps）：step 0=peak, step 1≈0 → **50% step 浪費**
+- 5000-example client（39 steps）：末段 ~3 step 浪費 → ~8%
+- C1 對 client size 中性,所有 step 同 LR
+
+預期 α=0.3 下 C2 < C1 in unweighted-mean accuracy(尤其小 client subset),α=0.5 下差距小。
+
+**Proposed experiment(when revisited)**：
+
+| Run | `lr-schedule` | `lr-scheduler-type` | α | Strategy |
+|---|---|---|---|---|
+| C1 baseline | `cosine` | `constant` | 0.3 / 0.5 | FedAvg |
+| C2 | `constant` | `cosine` | 0.3 / 0.5 | FedAvg |
+
+固定:`task=sst2`, `rounds=20`, `lr=0.001`, `aggregation=fedavg`(排除 strategy confound)。每組 1 次,共 4 runs。
+
+**Verification**：
+1. Final round unweighted mean accuracy (主 metric,from `eval_metrics.tsv`)
+2. **Per-client distribution**:把 client 按 `train_samples` 排序,看小 client 的 accuracy gap
+3. Convergence trajectory
+
+**Why deferred**：
+
+- 現行 C1 跟 Flower template 對齊,沒有 broken
+- LR schedule 不是 paper 主要 contribution,strategy ablation(FedALC variants)優先
+- 真要做也可以放在 paper appendix 當「我們也驗證了 schedule choice」的 supporting ablation
+
+**相關修正**(2026-05-04 同時更新):
+
+- `notes/papers/related_papers.md` — FedSA-LoRA 「local epochs=10」修正為「10 batches」(查官方 yaml + FederatedScope defaults 後發現之前誤讀);加 FedADC cosine 措辭註解
+
 ## 推薦執行順序
 
 1. **Task 1**（freeze → FedALC）：最快，1-2 小時實作 + 幾小時跑
@@ -253,6 +294,7 @@ Agglomerative + per-cluster A+B 聚合（無 MoE）。最重要的 Tier 2 baseli
 4. **Task 4**（global eval 修正）：1 天
 5. **Task 5**（FedLEASE）：2-3 天
 6. Multi-task（如果要做 LWC 驗證）
+7. **Task 6**（LR schedule ablation）：deferred,paper appendix 用,4 runs(~4 小時)
 
 ## Paper 裡這樣組織實驗
 

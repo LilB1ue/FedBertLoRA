@@ -94,6 +94,10 @@ class FedALCAPLWCStrategy(FedAvg):
         self.prev_cluster_groups: Optional[set] = None
         self.rounds_stable: int = 0
 
+        # Freeze snapshot (echoed into Phase 2 logs for self-contained reading)
+        self._frozen_layer_indices: Optional[List[int]] = None
+        self._frozen_at_round: Optional[int] = None
+
         # Init clustering log file
         self._cluster_log_path: Optional[str] = None
         if log_dir:
@@ -312,6 +316,11 @@ class FedALCAPLWCStrategy(FedAvg):
                 int(label): list(member_cids)
                 for label, member_cids in cluster_members.items()
             }
+            # Snapshot layer selection at freeze time so Phase 2 logs are self-contained
+            self._frozen_layer_indices = (
+                list(self.selected_layer_indices) if self.selected_layer_indices else None
+            )
+            self._frozen_at_round = int(server_round)
             logger.info(
                 f"Round {server_round}: → Phase 2 (frozen), "
                 f"sil={sil_score:.4f}, stable_rounds={self.rounds_stable}"
@@ -433,14 +442,24 @@ class FedALCAPLWCStrategy(FedAvg):
             clustering_metrics["phase"] = 2
             clustering_metrics["cluster_sizes"] = str(cluster_sizes)
 
-            # Log frozen round
+            # Log frozen round (echo layer snapshot so each entry is self-contained)
             if self._cluster_log_path:
+                b_keys = [k for k in self.lora_param_keys if "lora_B" in k]
+                frozen_b_keys = (
+                    [b_keys[i] for i in self._frozen_layer_indices]
+                    if self._frozen_layer_indices else []
+                )
                 log_entry = {
                     "round": server_round,
                     "phase": 2,
                     "n_clusters": n_clusters,
                     "silhouette_score": -1.0,
-                    "clustering_features": {"method": "frozen"},
+                    "clustering_features": {
+                        "method": "frozen",
+                        "frozen_layer_indices": self._frozen_layer_indices,
+                        "frozen_b_keys": frozen_b_keys,
+                        "frozen_at_round": self._frozen_at_round,
+                    },
                     "clusters": {
                         str(k): sorted(
                             [cid_to_pid.get(c, c) for c in v],

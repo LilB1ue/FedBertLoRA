@@ -12,8 +12,10 @@
   - 非 GLUE: GSM8K, CodeSearchNet
   - Clients: 3（ablation: 10, 20, 100）
   - Non-IID: Dirichlet α=0.5（也測 α=1.0 和 IID）
-  - Optimizer: SGD; LR=0.02
-  - LoRA: r=8, α=16, target=Q,V; rounds=1000; local epochs=10; batch=128
+  - Optimizer: **SGD, lr=0.02**（FederatedScope default）
+  - LR scheduler: **none**（FederatedScope `cfg.train.scheduler.type = ''` default,no warmup）
+  - LoRA: r=8, α=16, target=Q,V; rounds=1000; **local update steps=10 (batches, NOT epochs)**; batch=128
+  - **Note (2026-05-04 corrected)**：之前寫「local epochs=10」是誤讀。官方 yaml 是 `local_update_steps: 10` + `batch_or_epoch: batch`,實際是 10 個 batch(= 10 個 optimizer steps)per round,不是 10 個 epoch。整個 FL run 共 1000 × 10 = 10,000 optimizer steps
 
 ### 2. FedADC: Federated Fine-Tuning on Heterogeneous Data with Alternating Device-to-Device Collaboration
 - **發表**: Computer Networks, 2026
@@ -25,6 +27,8 @@
   - Clients: 80 devices（實體異質平台，非模擬）
   - Non-IID: Dirichlet p∈{0.1, 0.2, 0.5, 1.0}
   - LoRA: SST-2 r=8, 其餘 r=16; rounds=100; local epochs=1; batch=32; grad accum=4; AdamW lr=0.001 cosine
+  - **LR schedule note (2026-05-04 added)**：原文 p.9 寫 "the local learning rate is set to 0.001 and decays according to a cosine scheduler"。措辭曖昧 — 最自然解讀是 **within-round step-level cosine**(即 HF Trainer `lr_scheduler_type="cosine"`,= 我們 plan 中的 C2),因為「local」+ HF default 行為。但 paper 沒釋出 code,無法 100% 確認是否實際 across-round cosine
+  - **與我們 setup 對照**:AdamW + lr=0.001 + 1 epoch + batch=32 + grad_accum=4 **完全一致**;唯一差別是 cosine schedule 的位階(within-round vs across-round)
   - Baselines: BaseFedLoRA (FedAvg), FFA-LoRA, RoLoRA
 
 #### MADC（Mean Absolute Differences of pairwise Cosine similarity）
@@ -419,7 +423,7 @@ Silhouette 最佳 K=4（恰好 4 個任務），heatmap 顯示 block-diagonal。
 
 | 論文 | Optimizer | LoRA rank | LoRA target | Rounds | Local epochs/steps | Batch |
 |---|---|---|---|---|---|---|
-| FedSA-LoRA | SGD, lr=0.02 | r=8, α=16 | Q, V | 1000 | 10 epochs | 128 |
+| FedSA-LoRA | SGD, lr=0.02, **no scheduler/warmup** | r=8, α=16 | Q, V | 1000 | **10 batches** (corrected) | 128 |
 | FFA-LoRA | SGD | r=8, α=16 | attention + FFN | 1000 | 10 steps | 200 |
 | RoLoRA | — | r∈{1,2,4,8} | Q, V | 500 (RTE=200) | 20 epochs | 32 |
 | ADF-LoRA | AdamW | r=8, α=16 | Q, V | 150 | 20 steps | 32 |

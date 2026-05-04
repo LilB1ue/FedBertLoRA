@@ -43,23 +43,25 @@ METHODS: dict[str, dict[str, list]] = {
         "qnli": [
             ("FedAvg",         "20260402_132128_fedavg_a0.5",      "qnli_fedavg_a0.5",      "#1f77b4", "-", None),
             ("FedSA",          "20260405_071932_fedsa_a0.5",       "qnli_fedsa_a0.5",       "#2ca02c", "-", None),
-            ("FFA",            "20260416_064902_ffa_a0.5",         "qnli_ffa_a0.5",         "#d62728", "-", "server-only"),
+            ("FFA",            "20260422_065151_ffa_a0.5",         "qnli_ffa_a0.5",         "#d62728", "-", None),
             ("FedALC-AP",      "20260406_203614_fedalc_a0.5",      "qnli_fedalc_a0.5",      "#9467bd", "-", None),
             ("FedALC-AP-LWC",  "20260415_063849_fedalc-lwc_a0.5",  "qnli_fedalc-lwc_a0.5",  "#ff7f0e", "--", None),
         ],
     },
     "0.3": {
         "sst2": [
-            ("FedAvg",         "20260412_235402_fedavg_a0.3",      "sst2_fedavg_a0.3",      "#1f77b4", "-", None),
-            ("FedSA",          "20260412_235402_fedsa_a0.3",       "sst2_fedsa_a0.3",       "#2ca02c", "-", None),
-            ("FFA",            "20260416_064902_ffa_a0.3",         "sst2_ffa_a0.3",         "#d62728", "-", None),
-            ("FedALC-AP",      "20260408_114021_fedalc_a0.3",      "sst2_fedalc_a0.3",      "#9467bd", "-", None),
+            ("FedAvg",         "20260412_235402_fedavg_a0.3",       "sst2_fedavg_a0.3",       "#1f77b4", "-", None),
+            ("FedSA",          "20260412_235402_fedsa_a0.3",        "sst2_fedsa_a0.3",        "#2ca02c", "-", None),
+            ("FFA",            "20260416_064902_ffa_a0.3",          "sst2_ffa_a0.3",          "#d62728", "-", None),
+            ("FedALC-AP",      "20260408_114021_fedalc_a0.3",       "sst2_fedalc_a0.3",       "#9467bd", "-", None),
+            ("FedALC-AP-LWC",  "20260424_151019_fedalc-ap-lwc_a0.3","sst2_fedalc-ap-lwc_a0.3","#ff7f0e", "--", None),
         ],
         "qnli": [
-            ("FedAvg",         "20260412_235402_fedavg_a0.3",      "qnli_fedavg_a0.3",      "#1f77b4", "-", None),
-            ("FedSA",          "20260412_235402_fedsa_a0.3",       "qnli_fedsa_a0.3",       "#2ca02c", "-", None),
-            ("FFA",            "20260416_064902_ffa_a0.3",         "qnli_ffa_a0.3",         "#d62728", "-", None),
-            ("FedALC-AP",      "20260408_114021_fedalc_a0.3",      "qnli_fedalc_a0.3",      "#9467bd", "-", None),
+            ("FedAvg",         "20260412_235402_fedavg_a0.3",       "qnli_fedavg_a0.3",       "#1f77b4", "-", None),
+            ("FedSA",          "20260412_235402_fedsa_a0.3",        "qnli_fedsa_a0.3",        "#2ca02c", "-", None),
+            ("FFA",            "20260416_064902_ffa_a0.3",          "qnli_ffa_a0.3",          "#d62728", "-", None),
+            ("FedALC-AP",      "20260408_114021_fedalc_a0.3",       "qnli_fedalc_a0.3",       "#9467bd", "-", None),
+            ("FedALC-AP-LWC",  "20260424_151019_fedalc-ap-lwc_a0.3","qnli_fedalc-ap-lwc_a0.3","#ff7f0e", "--", None),
         ],
     },
 }
@@ -89,10 +91,17 @@ def per_round_stats(df: pd.DataFrame):
     return pd.DataFrame(records, columns=["round", "unweighted", "weighted", "std", "min", "max"])
 
 
+MAX_ROUND = 20  # Crop all plots to first N rounds for fair comparison
+
+
 def plot_metric_curves(alpha: str, task: str, metric: str, out_path: Path) -> list:
     """metric = 'unweighted' or 'weighted'."""
     fig, ax = plt.subplots(figsize=(9, 5))
     summary = []
+
+    # Track data range for auto-crop y-axis
+    data_min = 100.0
+    data_max = 0.0
 
     for name, batch, sub, colour, style, note in METHODS[alpha][task]:
         df = load_client_eval(batch, sub)
@@ -102,33 +111,41 @@ def plot_metric_curves(alpha: str, task: str, metric: str, out_path: Path) -> li
             summary.append((name, None, None, None, note or "missing"))
             continue
         stats = per_round_stats(df)
+        # Crop to first MAX_ROUND rounds
+        stats = stats[stats["round"] <= MAX_ROUND].reset_index(drop=True)
+        if stats.empty:
+            continue
         best_idx = stats[metric].idxmax()
         best = stats.loc[best_idx, metric]
         best_round = int(stats.loc[best_idx, "round"])
         last = stats[metric].iloc[-1]
         label = f"{name}{' (' + note + ')' if note else ''}  best={best*100:.2f}%@R{best_round}"
-        ax.plot(stats["round"], stats[metric] * 100,
+        vals = stats[metric] * 100
+        ax.plot(stats["round"], vals,
                 label=label, color=colour, linestyle=style, linewidth=1.8)
-        if metric == "unweighted":
-            ax.fill_between(stats["round"],
-                            (stats[metric] - stats["std"]) * 100,
-                            (stats[metric] + stats["std"]) * 100,
-                            color=colour, alpha=0.08)
-        # Mark best-round peak
-        ax.scatter([best_round], [best * 100], color=colour, s=70,
-                   marker="*", edgecolors="black", linewidths=0.8, zorder=5)
-        ax.annotate(f"R{best_round}",
-                    xy=(best_round, best * 100),
-                    xytext=(4, 4), textcoords="offset points",
-                    fontsize=8, color=colour, fontweight="bold")
+        data_min = min(data_min, vals.min())
+        data_max = max(data_max, vals.max())
         summary.append((name, best * 100, best_round, last * 100, note or ""))
 
     ax.set_xlabel("Round")
     ax.set_ylabel(f"{'Unweighted' if metric == 'unweighted' else 'Weighted'} per-client accuracy (%)")
-    subtitle = "mean ± std" if metric == "unweighted" else "Σ(acc·n) / Σn (== global pooled)"
+    subtitle = "mean per client" if metric == "unweighted" else "Σ(acc·n) / Σn (== global pooled)"
     ax.set_title(f"{task.upper()} α={alpha} — {metric} per-client acc ({subtitle})")
-    ax.grid(True, alpha=0.3)
     ax.legend(loc="lower right", fontsize=10)
+
+    # Auto-crop y-axis to data range (margin 2pp), ticks 5pp major / 1pp minor
+    import numpy as np
+    from matplotlib.ticker import MultipleLocator
+    ymin = max(0, np.floor((data_min - 2) / 5) * 5)
+    ymax = min(100, np.ceil((data_max + 1) / 5) * 5)
+    ax.set_ylim(ymin, ymax)
+    ax.yaxis.set_major_locator(MultipleLocator(5))
+    ax.yaxis.set_minor_locator(MultipleLocator(1))
+    ax.grid(True, which="major", alpha=0.35)
+    ax.grid(True, which="minor", alpha=0.12)
+
+    ax.set_xlim(1, MAX_ROUND)
+
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

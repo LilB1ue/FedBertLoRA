@@ -288,14 +288,21 @@ def server_fn(context: Context):
     summary_handler.addFilter(_SummaryFilter())
     flwr_logger.addHandler(summary_handler)
 
-    # Build on_fit_config_fn with round-level cosine annealing
+    # Build on_fit_config_fn with configurable LR schedule
+    lr_schedule = str(cfg.get("lr-schedule", "cosine")).lower()
+    if lr_schedule not in ("cosine", "constant"):
+        raise ValueError(f"lr-schedule must be 'cosine' or 'constant', got {lr_schedule!r}")
+
     def fit_config(server_round: int):
-        lr = cosine_annealing(
-            current_round=server_round,
-            total_round=num_rounds,
-            lrate_max=learning_rate,
-            lrate_min=1e-6,
-        )
+        if lr_schedule == "cosine":
+            lr = cosine_annealing(
+                current_round=server_round,
+                total_round=num_rounds,
+                lrate_max=learning_rate,
+                lrate_min=1e-6,
+            )
+        else:  # "constant"
+            lr = learning_rate
         return {"current_round": server_round, "learning_rate": lr, "log_timestamp": log_timestamp}
 
     # Build evaluate function

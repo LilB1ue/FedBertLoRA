@@ -48,6 +48,7 @@ dirichlet-alpha = 0.5
 
 # Training
 learning-rate = 0.001
+lr-schedule = "cosine"  # "cosine" (annealing across rounds) | "constant"
 batch-size = 32
 grad-accum-steps = 4
 max-seq-length = 128
@@ -65,7 +66,7 @@ log-timestamp = ""
 aggregation-mode = "fedsa"
 
 # FedALC-AP-LWC parameters (also reused by FedALC-AP-Multi for built-in layer selection)
-warmup-sil-threshold = 0.5
+warmup-sil-threshold = 0.5    # (deprecated for current LWC: no-warmup; still used by AP-Multi)
 freeze-sil-threshold = 0.8
 layer-selection-k = 10
 layer-reselect-every = 1  # 1=every round, 0=one-shot, N=every N rounds
