@@ -39,6 +39,7 @@
 | [evaluation_metrics.md](concepts/evaluation_metrics.md) | 評估指標說明：資料切分、evaluate vs server accuracy、FedALC server_eval 問題 |
 | [eval_weighting_convention.md](concepts/eval_weighting_convention.md) | Weighted vs unweighted mean 的 paper 慣例調查 + 本專案為何選 unweighted primary |
 | [fedalc_naming_convention.md](concepts/fedalc_naming_convention.md) | FedALC-AP / FedALC-AP-LWC / FedALC-AP-Multi 命名規則：family 結構、variant 定位、ablation 設計 |
+| [flwr_simulation_noise_floor.md](concepts/flwr_simulation_noise_floor.md) | flwr local-simulation 不是 byte-deterministic（R1 全等、R2+ 部分 partition 飄 ~1-2pp），含 refactor verification 案例分析 + multi-seed evaluation 必要性 |
 
 ## experiments/ — 實驗數據
 

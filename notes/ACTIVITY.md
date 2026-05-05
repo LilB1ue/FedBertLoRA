@@ -12,6 +12,78 @@
 
 ---
 
+## [2026-05-05] meta | LWC 文件修正：實作上沒有 silhouette warm-up
+
+**Files changed**：`CLAUDE.md`, `.claude/rules/fedalc_family.md`, `notes/concepts/fedalc_naming_convention.md`, `notes/concepts/fedalc_methods_comparison.md`, `notes/papers/FedALC-LoRA.md`, `notes/experiments/all_methods_comparison.md`
+
+**Why**：`fedalc_ap_lwc_strategy.py` docstring 寫 3-phase（warm-up → cluster → freeze），實際 code `self.phase = 1` 直接跳過 Phase 0，`warmup_sil_threshold` 從未被任何 logic 讀取。多份 markdown 跟著錯。
+
+**改了什麼**：
+- 6 份 md 統一改成「LWC = layer selection + freeze（無 warm-up）」
+- `fedalc_methods_comparison.md` 配置表把 LWC 那欄的 `warmup_sil_threshold` 從 ✓ 改成 ✗（殘留參數但未使用）
+- `all_methods_comparison.md` Finding 3 是事實錯誤（把功勞算到不存在的 sil warm-up 上）→ 改成 layer selection + early freeze
+
+**Follow-up**：
+- code 端 `fedalc_ap_lwc_strategy.py` docstring + 死參數 `warmup_sil_threshold` 待清掉（doc-only 這次先不動）
+- 真正的乾淨 ablation 軸（LWC w/ sil-warm-up vs Multi w/ Hopkins）需要先把 sil-warm-up 補回 LWC，現在的「LWC vs Multi」差兩個 component 捆綁
+
+---
+
+## [2026-05-04] refactor | strategy utilities 抽出到 bert/lora_utils + flwr noise floor 量測
+
+**Files added**：
+- `bert/lora_utils.py`（新 module，4 個 pure functions：`separate_a_b_others` / `reconstruct_parameters` / `weighted_average` / `compute_layer_scores`）
+- `tools/verify_refactor_bit_exact.sh`（refactor 用的 bit-exact 驗證 script）
+- `tools/diagnose_flwr_determinism.sh`（flwr 自身決定性診斷 script）
+- `notes/concepts/flwr_simulation_noise_floor.md`（noise floor 結構性紀錄）
+
+**Files changed**：
+- 5 個 strategy files（`bert/fedsa_strategy.py`, `bert/fedalc_ap_strategy.py`, `bert/fedalc_ap_lwc_strategy.py`, `bert/fedalc_ap_multi_strategy.py`, `bert/fedalc_agglo_lwc_strategy.py`）— 改用 `bert.lora_utils` import 取代 in-class duplicate methods
+- `.gitignore` 加 `.vscode`(IDE 自動加)
+
+**LOC 變化**：5 strategy file 累計 -252 LOC（duplicate methods 全砍），加 +100 LOC 在 utils module → 淨 -152。
+
+**Refactor 設計**：
+- FedSA 的 `classifier`/`score` 特殊處理從硬寫條件改用參數 `b_extra_keys=("classifier", "score")` 表達
+- AP-Multi 的壓縮風格(no docstring + 分號擠行)在抽出後消失
+- `_compute_layer_scores` 三個 LWC variant 略有差異(AP-Multi 加 n=1 safeguard,Agglo-LWC 加 float() cast),統一成 AP-Multi 的較 safe 版本(n>=2 實務情境下 bit-identical)
+
+**Why（refactor 動機）**：
+- 5 strategy file 共 2,771 行,~520 行是 duplicate(_separate_a_b_others / _reconstruct_parameters / _weighted_average byte-identical 4-5 個檔)
+- Naming 不一致(FedSA 用 `_separate_a_b`,FedALC family 用 `_separate_a_b_others`)
+- AP-Multi 的壓縮寫法跟其他檔風格不一致 → review 累
+- Memory `project_fedalc_unification_plan.md` 早有 unification 規劃,但這次只做最 lite 的 utility 抽出,**不動 phase logic / aggregate_fit**(避開 high-risk 改動)
+
+**Verification 過程(重要的副產品)**：
+
+寫了 `verify_refactor_bit_exact.sh` 預期 baseline 跟 refactor branch 在同 config 下 `eval_metrics.tsv` 應該 byte-identical(因為抽出去的 4 個 function 都 pure deterministic)。
+
+跑下去 **FAIL**:R1 全等但 R2 部分 partition 飄 ~1-2pp。
+
+寫 `diagnose_flwr_determinism.sh` 在**同 branch 跑兩次同 config** 排除 refactor 影響。結果:**baseline 自己跟自己也飄一樣的 9 個 partition、一樣的 magnitude**。
+
+→ **Refactor 沒問題,是 flwr local-simulation 在我們 setup 下的 inherent noise floor**。詳見 `notes/concepts/flwr_simulation_noise_floor.md`。
+
+**Why R1 不飄 R2 才飄、為什麼剛好 9 個 partition**(都在 noise floor 那篇 note 裡):
+- R1 是冷啟動,BLAS thread pool 跟 Ray worker pool 都還沒被 R1 計算「弄髒」
+- 飄的 9 個都是「label 分佈正常」的 partition(model 在學);不飄的多半是「label 極端偏」的 partition(model 退化成預測 majority class,trivial solution → deterministic)
+- 真正源頭:CPU BLAS multi-thread reduction、Ray worker scheduling、`set_seed` 沒涵蓋的層級
+
+**Implication**:
+- 之後 refactor / strategy 改動驗證**不能用 bit-exact**,要降級成「飄幅落在 noise floor 範圍 (~2pp) 內」的 statistical equivalence
+- Paper main comparison 必須**多 seed mean ± std**,不能單 seed 對單 seed
+- 想 byte-deterministic 需要 OMP_NUM_THREADS=1 + `torch.use_deterministic_algorithms(True)` 等(代價:既有 baseline 全失效 + 訓練變慢),**目前不啟用**
+
+**Commit**:
+- `7840e9c refactor(strategies): extract shared LoRA utilities to bert/lora_utils`(實際 net -152 LOC)
+- 兩個 verification script 移到 `tools/` 並一起 commit
+
+**Follow-up**:
+- 推 `refactor/strategy-utils` branch(等用戶決定)
+- Memory `project_fedalc_unification_plan.md` 描述的 full unification(統一成單一 strategy + config switch)還沒做,等 paper 實驗收斂後再評估
+
+---
+
 ## [2026-05-04] meta | LR schedule design 調查 + paper notes 修正
 
 **Files changed**：
