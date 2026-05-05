@@ -20,7 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **FedSA-LoRA**: A 聚合，B 留本地
 - **FFA-LoRA**: A freeze，只聚合 B
 - **FedALC-AP**: A 全域聚合，B 按 AP clustering 群內聚合，others 留本地（原簡單版 FedALC）
-- **FedALC-AP-LWC**: FedALC-AP + silhouette warm-up + Metric B layer selection + clustering freeze（ablation baseline）
+- **FedALC-AP-LWC**: FedALC-AP + Metric B layer selection + clustering freeze（ablation baseline；無 warm-up，R1 起直接 cluster）
 - **FedALC-AP-Multi**: FedALC-AP + 內建 LWC layer selection + Hopkins adaptive warm-up + cumulative ΔB + freeze（主方法，targets multi-task FL）
 
 ### 相關論文
@@ -86,7 +86,7 @@ bert/
 ├── strategy.py        # FedAvgStrategy: 標準 FedAvg 策略
 ├── fedsa_strategy.py  # FedSALoRAStrategy: selective aggregation (FedSA/FFA 模式)
 ├── fedalc_ap_strategy.py # FedALCAPStrategy: AP clustering B + global A + local others (basic)
-├── fedalc_ap_lwc_strategy.py # FedALCAPLWCStrategy: silhouette warm-up → layer selection → freeze (ablation baseline)
+├── fedalc_ap_lwc_strategy.py # FedALCAPLWCStrategy: layer selection → AP clustering → freeze (ablation baseline; no warm-up)
 ├── fedalc_ap_multi_strategy.py # FedALCAPMultiStrategy: adaptive warm-up (Hopkins) → cumulative ΔB clustering → freeze + built-in layer selection (main method for multi-task)
 ├── client_app.py      # FlowerClient: 本地 LoRA 訓練 + checkpoint 存儲
 ├── server_app.py      # ServerApp: 初始化模型 + strategy 選擇 + server-side evaluation + wandb
@@ -169,7 +169,7 @@ logs/{timestamp}/{task}_{strategy}/
 | `lora-alpha` | `16` | LoRA scaling |
 | `lora-target-modules` | `query,key,value,dense` | LoRA 套用的模組（attention Q/K/V + 所有 dense） |
 | `aggregation-mode` | `fedsa` | 聚合策略: fedavg / fedsa / ffa / fedalc-ap / fedalc-ap-lwc / fedalc-ap-multi |
-| `warmup-sil-threshold` | `0.5` | AP-LWC/AP-Multi: warm-up 結束的 silhouette 門檻 |
+| `warmup-sil-threshold` | `0.5` | AP-Multi only: warm-up 結束的 silhouette 門檻（LWC 殘留參數但未使用） |
 | `freeze-sil-threshold` | `0.8` | AP-LWC/AP-Multi: clustering freeze 的 silhouette 門檻 |
 | `layer-selection-k` | `10` | AP-LWC/AP-Multi: top-K 層數 |
 | `layer-reselect-every` | `1` | AP-LWC/AP-Multi: 每 N 輪重新選層（0=one-shot） |

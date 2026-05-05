@@ -114,7 +114,7 @@ Server-side `server_eval.tsv` 取 parameter average 做 eval，對 personalized 
 
 - Unweighted 92.69% best at round 9（比其他 methods 都早）
 - FedALC-AP 要到 R27 才達 92.55%
-- 說明 LWC 的 silhouette warm-up + layer selection 確實加速收斂
+- 說明 LWC 的 layer selection + early freeze 確實加速收斂（注意：LWC 實作無 warm-up，原本歸功於 silhouette warm-up 的描述為誤）
 - 但 final accuracy 差不多（FedALC-AP 最終 weighted 93.85% > LWC 93.12%）
 
 ### 📊 Finding 4 — Weighted vs Unweighted 差距揭露 fairness 問題

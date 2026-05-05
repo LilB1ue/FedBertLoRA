@@ -9,7 +9,7 @@
 ## 方法變體
 
 - **FedALC-AP**（basic baseline）：全部 B flatten → AP clustering → per-cluster avg。已實作，已有結果。
-- **FedALC-AP-LWC**（ablation baseline）：silhouette warm-up → Metric B layer selection → selected layers AP clustering。已實作。
+- **FedALC-AP-LWC**（ablation baseline）：Metric B layer selection → selected-layer AP clustering → freeze。**無 warm-up**（R1 起直接 cluster）。已實作。
 - **FedALC-AP-Multi**（主方法）：adaptive FedSA warm-up → **內建 Metric B 層選擇降維** → Hopkins trigger on top-K ΔB → cumulative ΔB clustering → silhouette / stable-round freeze。已實作，target multi-task FL 場景。
   - Layer selection 是 FedALC-AP-Multi 的**內建前處理**（不是獨立 variant），原因：Hopkins 在 D>50 會因 curse of dimensionality 失效 + `u_dist**d` 數值溢位。詳見 `notes/papers/task_vector_connection.md`。
 

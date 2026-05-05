@@ -8,7 +8,7 @@
 
 - `{clustering_algorithm}`：使用的 clustering 演算法 (AP / Spectral / Agglo 等)
 - `{variant}` (可選)：在該演算法 baseline 上的額外 component
-  - `LWC` = silhouette warm-up + Metric B layer selection (舊的 LWC 設計)
+  - `LWC` = Metric B layer selection + freeze（無 warm-up；ablation baseline）
   - `Multi` = 內建 layer selection + Hopkins adaptive trigger + cumulative ΔB + freeze (主方法，targets multi-task)
 
 所有 FedALC-* 變體**共享相同的核心設計**（A global / B per-cluster / Others local），differentiation 在 clustering 演算法 + 額外 component。
@@ -61,7 +61,7 @@ Phase 2 (frozen):
 - **File**: `bert/fedalc_ap_lwc_strategy.py`
 - **Class**: `FedALCAPLWCStrategy`
 - **Clustering algorithm**: AP on top-K B (Metric B layer selection)
-- **Trigger**: silhouette-based warm-up
+- **Trigger**: 無 warm-up（R1 起直接 cluster）；freeze 由 silhouette ≥ `freeze_sil_threshold` 或 cluster 連 N 輪不變觸發
 - **Config mode**: `aggregation-mode = "fedalc-ap-lwc"`
 - **Run script**: `bash run_fedalc_ap_lwc.sh`
 - **定位**：「LWC without adaptive Hopkins trigger」的 ablation baseline，證明 Hopkins + cumulative ΔB 的貢獻。
@@ -100,7 +100,7 @@ Phase 2 (frozen):
 | 方法 | Warm-up | Layer selection | Clustering feature | Freeze |
 |---|---|---|---|---|
 | FedALC-AP (baseline) | 無 | 無（full B） | Single B | 無 |
-| FedALC-AP-LWC | Silhouette-based | Metric B top-K | Single B (top-K) | Yes |
+| FedALC-AP-LWC | 無 ⚠ | Metric B top-K | Single B (top-K) | Yes |
 | **FedALC-AP-Multi (主方法)** | **Adaptive (Hopkins)** | **Metric B top-K（內建）** | **Cumulative ΔB (top-K)** | Yes |
 | FedALC-AP-Multi-no-layer-sel | Adaptive (Hopkins) | **關閉** (full B) | Cumulative ΔB (full) | Yes |
 | FedALC-AP-Multi-no-warmup | 無（R1 直接 cluster）| Metric B top-K | Single B (top-K) | Yes |
@@ -108,6 +108,8 @@ Phase 2 (frozen):
 | FedALC-AP-Multi-current-B | Adaptive (Hopkins) | Metric B on current B | Cumulative ΔB (top-K) | Yes |
 
 > `FedALC-AP-Multi-no-layer-sel` 預期 Hopkins 會數值溢位 / 落在 0.5 區間，證明 layer selection 的必要性。
+>
+> ⚠ **目前 LWC 實作無 warm-up**（code 直接從 Phase 1 開始）。若要做純 Hopkins ablation（LWC = sil-based warm-up vs Multi = Hopkins），需先把 silhouette-based warm-up 補回 LWC，否則 LWC vs Multi 的差異是「warm-up + cumulative ΔB」兩個 component 捆綁，不是純 trigger 機制的差異。
 > `FedALC-AP-Multi-current-B` 用 `layer-score-feature = "current_b"` 切換，測試 layer scoring feature 的影響。
 
 ## Paper 組織建議

@@ -6,7 +6,7 @@ FedALC-* family 命名規則：`FedALC-{clustering_algorithm}[-{variant}]`
 
 - **clustering_algorithm**: AP / Spectral / Agglo（只有 AP 已實作）
 - **variant**（optional）：
-  - `LWC` — silhouette warm-up + Metric B layer selection（ablation baseline）
+  - `LWC` — Metric B layer selection + freeze（無 warm-up；ablation baseline）
   - `Multi` — Hopkins adaptive + cumulative ΔB + internal layer selection + freeze（主方法，target multi-task）
 
 ## Why

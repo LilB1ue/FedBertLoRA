@@ -99,7 +99,7 @@ AP 自動決定 K（damping 影響 K；本專案固定 0.5）。三者都跟著 
 | 參數 | AP | AP-LWC | AP-Multi | default |
 |---|:---:|:---:|:---:|---|
 | `ap_damping` / `ap_max_iter` | ✓ | ✓ | ✓ | 0.5 / 100 |
-| `warmup_sil_threshold` | | ✓ | | 0.5 |
+| `warmup_sil_threshold` | | ✗ (參數存在但未使用) | | 0.5 |
 | `hopkins_threshold` | | | ✓ | 0.75 |
 | `warmup_max_rounds` | | | ✓ | 10 |
 | `freeze_sil_threshold` | | ✓ | ✓ | 0.9 |
