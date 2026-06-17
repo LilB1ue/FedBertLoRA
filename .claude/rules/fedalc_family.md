@@ -4,10 +4,12 @@
 
 FedALC-* family 命名規則：`FedALC-{clustering_algorithm}[-{variant}]`
 
-- **clustering_algorithm**: AP / Spectral / Agglo（只有 AP 已實作）
+- **clustering_algorithm**: AP / Agglo / Random / Spectral（AP / Agglo / Random 已實作）
 - **variant**（optional）：
   - `LWC` — Metric B layer selection + freeze（無 warm-up；ablation baseline）
   - `Multi` — Hopkins adaptive + cumulative ΔB + internal layer selection + freeze（主方法，target multi-task）
+
+`Random` 是 control baseline：算 cluster 但完全不看 B 相似度，純隨機分群。用來檢驗 AP 的 clustering signal 是否真的有貢獻。
 
 ## Why
 
@@ -23,6 +25,8 @@ FedALC-* family 命名規則：`FedALC-{clustering_algorithm}[-{variant}]`
 | `"fedalc-ap"` | `FedALCAPStrategy` | `bert/fedalc_ap_strategy.py` |
 | `"fedalc-ap-lwc"` | `FedALCAPLWCStrategy` | `bert/fedalc_ap_lwc_strategy.py` |
 | `"fedalc-ap-multi"` | `FedALCAPMultiStrategy` | `bert/fedalc_ap_multi_strategy.py` |
+| `"fedalc-agglo-lwc"` | `FedALCAggloLWCStrategy` | `bert/fedalc_agglo_lwc_strategy.py` |
+| `"fedalc-random"` | `FedALCRandomStrategy` | `bert/fedalc_random_strategy.py` |
 
 ### 不要做
 

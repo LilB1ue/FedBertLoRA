@@ -18,6 +18,7 @@ from bert.fedalc_ap_strategy import FedALCAPStrategy
 from bert.fedalc_ap_lwc_strategy import FedALCAPLWCStrategy
 from bert.fedalc_ap_multi_strategy import FedALCAPMultiStrategy
 from bert.fedalc_agglo_lwc_strategy import FedALCAggloLWCStrategy
+from bert.fedalc_random_strategy import FedALCRandomStrategy
 
 
 def get_metrics_aggregation_fn(log_path, phase, use_wandb=False):
@@ -362,6 +363,16 @@ def server_fn(context: Context):
             layer_selection_k=int(cfg.get("layer-selection-k", 10)),
             layer_reselect_every=int(cfg.get("layer-reselect-every", 1)),
             layer_score_feature=str(cfg.get("layer-score-feature", "cumulative_delta_b")),
+            **common_kwargs,
+        )
+    elif aggregation_mode == "fedalc-random":
+        strategy = FedALCRandomStrategy(
+            lora_param_keys=lora_param_keys,
+            use_wandb=wandb_enabled,
+            log_dir=log_subdir,
+            random_cluster_k=int(cfg.get("random-cluster-k", 3)),
+            fixed_assignment=bool(cfg.get("random-fixed-assignment", True)),
+            random_seed=int(cfg.get("random-seed", seed)),
             **common_kwargs,
         )
     elif aggregation_mode == "fedalc-agglo-lwc":
