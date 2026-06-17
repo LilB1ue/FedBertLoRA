@@ -1,6 +1,16 @@
 # PDF papers
 *.pdf
+slides/
 .vscode
+
+# Local agent/runtime files
+.claude/*.lock
+
+# Local research artifacts
+notes/
+plots/
+tools/
+
 # Model checkpoints
 checkpoints/
 results/
