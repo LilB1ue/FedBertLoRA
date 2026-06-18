@@ -32,7 +32,7 @@ clientapp = "bert.client_app:app"
 
 [tool.flwr.app.config]
 # FL
-num-server-rounds = 20
+num-server-rounds = 30
 fraction-fit = 1.0
 
 # Model + LoRA
@@ -44,23 +44,30 @@ lora-target-modules = "query,key,value,dense"
 # Data
 task-name = "sst2"
 num-clients = 30  # must match [federations] num-supernodes
-dirichlet-alpha = 0.5
+dirichlet-alpha = 0.3
+min-partition-size = 256
 
 # Training
 learning-rate = 0.001
-lr-schedule = "cosine"  # "cosine" (annealing across rounds) | "constant"
+lr-schedule = "constant"  # "cosine" (annealing across rounds) | "constant"
 batch-size = 32
-grad-accum-steps = 4
+grad-accum-steps = 1
 max-seq-length = 128
 local-epochs = 1
 weight-decay = 0.01
 lora-dropout = 0.1
-lr-scheduler-type = "constant"
+lr-scheduler-type = "cosine"
 test-split-ratio = 0.2
 seed = 42
 logging-steps = 10
 log-dir = "logs"
 log-timestamp = ""
+
+# Checkpoints: "all" preserves legacy every-round checkpoints; "selective"
+# saves only round-1 before/after local training plus eval-aligned best checkpoints.
+checkpoint-save-policy = "selective"
+checkpoint-best-metric = "accuracy"
+checkpoint-best-mode = "max"
 
 # Strategy: "fedavg" | "fedsa" | "ffa" | "fedalc-ap" | "fedalc-ap-lwc" | "fedalc-ap-multi" | "fedalc-agglo-lwc" | "fedalc-random"
 aggregation-mode = "fedsa"
@@ -92,6 +99,7 @@ random-seed = 42                              # Seed for the partition draw (ove
 # Wandb (FL client logging)
 wandb-enabled = false
 wandb-project = "bert-federated"
+wandb-run-tag = "without-server-lr"
 
 [tool.flwr.federations]
 default = "local-simulation"

@@ -11,6 +11,12 @@ from torch.utils.data import DataLoader
 from transformers import Trainer, TrainingArguments
 
 from bert.dataset import load_data, get_num_labels
+from bert.experiment_config import (
+    build_run_dir,
+    normalize_checkpoint_policy,
+    should_save_client_checkpoint,
+    should_save_received_checkpoint,
+)
 from bert.models import get_model, get_parameters, set_parameters, set_seed, freeze_lora_a
 
 
@@ -24,7 +30,8 @@ class FlowerClient(NumPyClient):
                  task_name: str = "sst2", checkpoint_dir: str = None,
                  seed: int = 42, log_dir: str = "logs",
                  aggregation_mode: str = "fedavg",
-                 dirichlet_alpha: float = 0.5):
+                 dirichlet_alpha: float = 0.5,
+                 checkpoint_save_policy: str = "all"):
         self.net = net
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
@@ -44,24 +51,32 @@ class FlowerClient(NumPyClient):
         self.log_dir = log_dir
         self.aggregation_mode = aggregation_mode
         self.dirichlet_alpha = dirichlet_alpha
-        # Matches server_app.py batch_dir layout:
-        #   logs/<ts>_<mode>_a<alpha>/<task>_<mode>_a<alpha>/
-        self._alpha_tag = f"_a{float(dirichlet_alpha)}"
+        self.checkpoint_save_policy = normalize_checkpoint_policy(checkpoint_save_policy)
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.net.to(self.device)
 
     def fit(self, parameters, config):
         set_parameters(self.net, parameters)
 
-        current_round = config.get("current_round", 0)
+        current_round = int(config.get("current_round", 0))
         log_timestamp = config.get("log_timestamp", "")
 
-        # Save received (post-aggregation) adapter for non-fedavg strategies
-        if self.aggregation_mode != "fedavg" and log_timestamp:
-            batch_dir = f"{log_timestamp}_{self.aggregation_mode}{self._alpha_tag}"
-            run_subdir = f"{self.task_name}_{self.aggregation_mode}{self._alpha_tag}"
+        # Legacy full-retention path is preserved by checkpoint-save-policy="all".
+        if (
+            should_save_received_checkpoint(
+                self.checkpoint_save_policy, self.aggregation_mode, current_round
+            )
+            and log_timestamp
+        ):
+            run_dir = build_run_dir(
+                self.log_dir,
+                log_timestamp,
+                self.task_name,
+                self.aggregation_mode,
+                self.dirichlet_alpha,
+            )
             recv_dir = os.path.join(
-                self.log_dir, batch_dir, run_subdir,
+                run_dir,
                 "received_checkpoints",
                 f"round_{current_round}", f"client_{self.partition_id}",
             )
@@ -112,14 +127,17 @@ class FlowerClient(NumPyClient):
 
         # Save per-client LoRA checkpoint (trained, before aggregation) — all strategies
         if log_timestamp:
-            batch_dir = f"{log_timestamp}_{self.aggregation_mode}{self._alpha_tag}"
-            run_subdir = f"{self.task_name}_{self.aggregation_mode}{self._alpha_tag}"
-            ckpt_dir = os.path.join(
-                self.log_dir, batch_dir, run_subdir, "client_checkpoints"
+            run_dir = build_run_dir(
+                self.log_dir,
+                log_timestamp,
+                self.task_name,
+                self.aggregation_mode,
+                self.dirichlet_alpha,
             )
+            ckpt_dir = os.path.join(run_dir, "client_checkpoints")
         else:
             ckpt_dir = self.checkpoint_dir
-        if ckpt_dir:
+        if ckpt_dir and should_save_client_checkpoint(self.checkpoint_save_policy, current_round):
             save_path = os.path.join(ckpt_dir, f"round_{current_round}", f"client_{self.partition_id}")
             os.makedirs(save_path, exist_ok=True)
             self.net.save_pretrained(save_path)
@@ -136,11 +154,38 @@ class FlowerClient(NumPyClient):
 
     def evaluate(self, parameters, config):
         set_parameters(self.net, parameters)
+        current_round = int(config.get("current_round", 0))
+        log_timestamp = str(config.get("log_timestamp", ""))
+        checkpoint_policy = normalize_checkpoint_policy(
+            config.get("checkpoint_save_policy", self.checkpoint_save_policy)
+        )
+
+        if checkpoint_policy == "selective" and current_round > 0 and log_timestamp:
+            run_dir = build_run_dir(
+                self.log_dir,
+                log_timestamp,
+                self.task_name,
+                self.aggregation_mode,
+                self.dirichlet_alpha,
+            )
+            save_path = os.path.join(
+                run_dir,
+                "best_checkpoints",
+                f"round_{current_round}",
+                f"client_{self.partition_id}",
+            )
+            os.makedirs(save_path, exist_ok=True)
+            self.net.save_pretrained(save_path)
+
         loss, eval_metrics = test(self.net, self.eval_dataset, self.data_collator,
                                   self.batch_size, self.device, self.task_name)
         del self.net
         torch.cuda.empty_cache()
-        metrics = {**eval_metrics, "partition_id": self.partition_id}
+        metrics = {
+            **eval_metrics,
+            "partition_id": self.partition_id,
+            "server_round": current_round,
+        }
         return float(loss), len(self.eval_dataset), metrics
 
 
@@ -176,6 +221,7 @@ def client_fn(context: Context):
     lora_alpha = int(cfg["lora-alpha"])
     target_modules = str(cfg["lora-target-modules"]).split(",")
     dirichlet_alpha = float(cfg["dirichlet-alpha"])
+    min_partition_size = int(cfg.get("min-partition-size", 10))
     max_seq_length = int(cfg["max-seq-length"])
     batch_size = int(cfg["batch-size"])
     local_epochs = int(cfg["local-epochs"])
@@ -189,11 +235,14 @@ def client_fn(context: Context):
     logging_steps = int(cfg["logging-steps"])
     log_dir = str(cfg.get("log-dir", "logs"))
     aggregation_mode = str(cfg.get("aggregation-mode", "fedavg"))
+    checkpoint_save_policy = normalize_checkpoint_policy(
+        str(cfg.get("checkpoint-save-policy", "all"))
+    )
     log_timestamp = str(cfg.get("log-timestamp", ""))
-    alpha_tag = f"_a{dirichlet_alpha}"
-    batch_dir = f"{log_timestamp}_{aggregation_mode}{alpha_tag}"
-    run_subdir = f"{task_name}_{aggregation_mode}{alpha_tag}"
-    checkpoint_dir = os.path.join(log_dir, batch_dir, run_subdir, "client_checkpoints")
+    checkpoint_dir = os.path.join(
+        build_run_dir(log_dir, log_timestamp, task_name, aggregation_mode, dirichlet_alpha),
+        "client_checkpoints",
+    )
 
     set_seed(seed)
 
@@ -206,6 +255,7 @@ def client_fn(context: Context):
         task_name=task_name,
         model_name=model_name,
         dirichlet_alpha=dirichlet_alpha,
+        min_partition_size=min_partition_size,
         max_seq_length=max_seq_length,
         test_size=test_split_ratio,
         seed=seed,
@@ -241,6 +291,7 @@ def client_fn(context: Context):
         log_dir=log_dir,
         aggregation_mode=aggregation_mode,
         dirichlet_alpha=dirichlet_alpha,
+        checkpoint_save_policy=checkpoint_save_policy,
     ).to_client()
 
 

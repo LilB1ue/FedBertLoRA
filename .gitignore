@@ -10,6 +10,7 @@ slides/
 notes/
 plots/
 tools/
+tests/
 
 # Model checkpoints
 checkpoints/

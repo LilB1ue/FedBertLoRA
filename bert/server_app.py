@@ -11,6 +11,14 @@ from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from torch.utils.data import DataLoader
 
 from bert.dataset import get_num_labels, load_centralized_data
+from bert.experiment_config import (
+    BestCheckpointTracker,
+    build_run_dir,
+    build_wandb_run_name,
+    normalize_checkpoint_policy,
+    should_save_global_checkpoint,
+    validate_checkpoint_best_metric,
+)
 from bert.models import cosine_annealing, get_model, get_parameters, get_parameter_keys, set_parameters, set_seed
 from bert.strategy import FedAvgStrategy
 from bert.fedsa_strategy import FedSALoRAStrategy
@@ -21,7 +29,7 @@ from bert.fedalc_agglo_lwc_strategy import FedALCAggloLWCStrategy
 from bert.fedalc_random_strategy import FedALCRandomStrategy
 
 
-def get_metrics_aggregation_fn(log_path, phase, use_wandb=False):
+def get_metrics_aggregation_fn(log_path, phase, use_wandb=False, best_checkpoint_tracker=None):
     """Return a metrics aggregation function that logs per-client metrics to TSV.
 
     Args:
@@ -36,10 +44,22 @@ def get_metrics_aggregation_fn(log_path, phase, use_wandb=False):
         """metrics_list: List[(num_examples, metrics_dict)] from each client."""
         _round_counter[0] += 1
         current_round = _round_counter[0]
+        metric_rounds = {
+            int(metrics["server_round"])
+            for _, metrics in metrics_list
+            if isinstance(metrics.get("server_round"), (int, float))
+        }
+        if len(metric_rounds) == 1:
+            current_round = metric_rounds.pop()
+        elif len(metric_rounds) > 1:
+            raise ValueError(f"Inconsistent server_round values in {phase} metrics")
 
         # Determine columns from first client's metrics (exclude partition_id)
         sample_metrics = metrics_list[0][1]
-        metric_keys = [k for k in sorted(sample_metrics.keys()) if k != "partition_id"]
+        metric_keys = [
+            k for k in sorted(sample_metrics.keys())
+            if k not in ("partition_id", "server_round")
+        ]
 
         # Write header on first call
         if not _header_written[0]:
@@ -67,6 +87,12 @@ def get_metrics_aggregation_fn(log_path, phase, use_wandb=False):
                 aggregated[f"{key}_std"] = float(torch.tensor(raw_vals, dtype=torch.float64).std())
                 aggregated[f"{key}_min"] = min(raw_vals)
                 aggregated[f"{key}_max"] = max(raw_vals)
+
+        if best_checkpoint_tracker is not None:
+            best_metadata = best_checkpoint_tracker.update(current_round, metrics_list)
+            for key, value in best_metadata.items():
+                if isinstance(value, (int, float)):
+                    aggregated[f"best_{key}"] = value
 
         # Log to wandb
         if use_wandb:
@@ -100,7 +126,7 @@ def _eval_on_loader(net, testloader, device, task_name):
 def get_evaluate_fn(model_name, task_name, num_labels, lora_r, lora_alpha,
                     target_modules, max_seq_length, batch_size, lora_dropout=0.1,
                     server_log_path=None, use_wandb=False, checkpoint_dir=None,
-                    aggregation_mode="fedavg"):
+                    aggregation_mode="fedavg", checkpoint_save_policy="all"):
     """Return a server-side evaluation function."""
     # Pre-load eval data once
     _, eval_dataset, _, data_collator = load_centralized_data(
@@ -154,8 +180,9 @@ def get_evaluate_fn(model_name, task_name, num_labels, lora_r, lora_alpha,
                 metrics[f"{k}_mm"] = v
                 log_msg += f", {k}_mm={v:.4f}"
 
-        # Save global LoRA checkpoint (only for fedavg — others have per-client checkpoints)
-        if checkpoint_dir and aggregation_mode == "fedavg":
+        # Legacy full-retention path: save every FedAvg global checkpoint only
+        # when checkpoint-save-policy="all".
+        if checkpoint_dir and should_save_global_checkpoint(checkpoint_save_policy, aggregation_mode):
             save_path = os.path.join(checkpoint_dir, f"round_{server_round}")
             os.makedirs(save_path, exist_ok=True)
             net.save_pretrained(save_path)
@@ -209,8 +236,15 @@ def server_fn(context: Context):
     log_dir = str(cfg.get("log-dir", "logs"))
     wandb_enabled = bool(cfg.get("wandb-enabled", False))
     wandb_project = str(cfg.get("wandb-project", "bert-federated"))
+    wandb_run_tag = str(cfg.get("wandb-run-tag", ""))
     num_clients = int(cfg.get("num-clients", 0))
     learning_rate = float(cfg["learning-rate"])
+    checkpoint_save_policy = normalize_checkpoint_policy(
+        str(cfg.get("checkpoint-save-policy", "all"))
+    )
+    checkpoint_best_metric = str(cfg.get("checkpoint-best-metric", "accuracy"))
+    checkpoint_best_mode = str(cfg.get("checkpoint-best-mode", "max"))
+    validate_checkpoint_best_metric(task_name, checkpoint_best_metric)
 
     set_seed(seed)
 
@@ -221,7 +255,16 @@ def server_fn(context: Context):
         ts = datetime.now().strftime("%m%d_%H%M")
         host = socket.gethostname()
         alpha = float(cfg.get("dirichlet-alpha", 0.5))
-        run_name = f"{task_name}_{aggregation_mode}_c{num_clients}_r{num_rounds}_a{alpha}_{host}_{ts}"
+        run_name = build_wandb_run_name(
+            task_name=task_name,
+            aggregation_mode=aggregation_mode,
+            num_clients=num_clients,
+            num_rounds=num_rounds,
+            alpha=alpha,
+            host=host,
+            timestamp=ts,
+            run_tag=wandb_run_tag,
+        )
         wandb.init(
             project=wandb_project,
             name=run_name,
@@ -244,6 +287,11 @@ def server_fn(context: Context):
                 "lora_dropout": lora_dropout,
                 "weight_decay": float(cfg.get("weight-decay", 0.01)),
                 "lr_scheduler_type": str(cfg.get("lr-scheduler-type", "constant")),
+                "min_partition_size": int(cfg.get("min-partition-size", 10)),
+                "checkpoint_save_policy": checkpoint_save_policy,
+                "checkpoint_best_metric": checkpoint_best_metric,
+                "checkpoint_best_mode": checkpoint_best_mode,
+                "wandb_run_tag": wandb_run_tag,
                 "seed": seed,
             },
             settings=wandb.Settings(_disable_stats=True, _disable_meta=True),
@@ -264,9 +312,10 @@ def server_fn(context: Context):
     # Inner subdir repeats them for robustness (single-subdir paths stay
     # identifiable when passed to plot scripts).
     log_timestamp = str(cfg.get("log-timestamp", "")) or datetime.now().strftime("%Y%m%d_%H%M%S")
-    alpha_tag = f"_a{float(cfg.get('dirichlet-alpha', 0.5))}"
-    batch_dir = f"{log_timestamp}_{aggregation_mode}{alpha_tag}"
-    log_subdir = os.path.join(log_dir, batch_dir, f"{task_name}_{aggregation_mode}{alpha_tag}")
+    dirichlet_alpha = float(cfg.get("dirichlet-alpha", 0.5))
+    log_subdir = build_run_dir(
+        log_dir, log_timestamp, task_name, aggregation_mode, dirichlet_alpha
+    )
     fit_log_path = os.path.join(log_subdir, "fit_metrics.tsv")
     eval_log_path = os.path.join(log_subdir, "eval_metrics.tsv")
     server_log_path = os.path.join(log_subdir, "server_eval.tsv")
@@ -306,6 +355,13 @@ def server_fn(context: Context):
             lr = learning_rate
         return {"current_round": server_round, "learning_rate": lr, "log_timestamp": log_timestamp}
 
+    def evaluate_config(server_round: int):
+        return {
+            "current_round": server_round,
+            "log_timestamp": log_timestamp,
+            "checkpoint_save_policy": checkpoint_save_policy,
+        }
+
     # Build evaluate function
     evaluate_fn = get_evaluate_fn(
         model_name, task_name, num_labels, lora_r, lora_alpha,
@@ -314,11 +370,24 @@ def server_fn(context: Context):
         use_wandb=wandb_enabled,
         checkpoint_dir=global_ckpt_dir,
         aggregation_mode=aggregation_mode,
+        checkpoint_save_policy=checkpoint_save_policy,
     )
 
     # Metrics aggregation functions (log per-client metrics to TSV + optional wandb)
     fit_metrics_agg = get_metrics_aggregation_fn(fit_log_path, "fit", use_wandb=wandb_enabled)
-    eval_metrics_agg = get_metrics_aggregation_fn(eval_log_path, "evaluate", use_wandb=wandb_enabled)
+    best_checkpoint_tracker = None
+    if checkpoint_save_policy == "selective":
+        best_checkpoint_tracker = BestCheckpointTracker(
+            os.path.join(log_subdir, "best_checkpoints"),
+            metric=checkpoint_best_metric,
+            mode=checkpoint_best_mode,
+        )
+    eval_metrics_agg = get_metrics_aggregation_fn(
+        eval_log_path,
+        "evaluate",
+        use_wandb=wandb_enabled,
+        best_checkpoint_tracker=best_checkpoint_tracker,
+    )
 
     # Create strategy based on aggregation mode
     common_kwargs = dict(
@@ -327,6 +396,7 @@ def server_fn(context: Context):
         initial_parameters=initial_parameters,
         evaluate_fn=evaluate_fn,
         on_fit_config_fn=fit_config,
+        on_evaluate_config_fn=evaluate_config,
         fit_metrics_aggregation_fn=fit_metrics_agg,
         evaluate_metrics_aggregation_fn=eval_metrics_agg,
     )

@@ -4,6 +4,8 @@ import warnings
 
 from transformers import AutoTokenizer, DataCollatorWithPadding
 
+from bert.experiment_config import build_fds_cache_key
+
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -61,6 +63,7 @@ def load_data(
     task_name: str,
     model_name: str,
     dirichlet_alpha: float = 0.5,
+    min_partition_size: int = 10,
     max_seq_length: int = 128,
     test_size: float = 0.2,
     seed: int = 42,
@@ -73,6 +76,7 @@ def load_data(
         task_name: GLUE task name (sst2, qnli, mnli, qqp, rte).
         model_name: HuggingFace model name for tokenizer.
         dirichlet_alpha: Dirichlet distribution alpha for non-IID split.
+        min_partition_size: Minimum number of examples per partition.
         max_seq_length: Maximum token sequence length.
         test_size: Fraction of data for local validation.
 
@@ -83,7 +87,9 @@ def load_data(
     from flwr_datasets.partitioner import DirichletPartitioner
 
     task_cfg = GLUE_TASK_CONFIG[task_name]
-    cache_key = f"{task_name}_{num_partitions}_{dirichlet_alpha}_{seed}"
+    cache_key = build_fds_cache_key(
+        task_name, num_partitions, dirichlet_alpha, seed, min_partition_size
+    )
 
     global _fds_cache
     if cache_key not in _fds_cache:
@@ -91,7 +97,7 @@ def load_data(
             num_partitions=num_partitions,
             partition_by=task_cfg["label_field"],
             alpha=dirichlet_alpha,
-            min_partition_size=10,
+            min_partition_size=min_partition_size,
             seed=seed,
         )
 
