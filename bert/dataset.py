@@ -1,10 +1,11 @@
-"""GLUE dataset loading with Dirichlet non-IID partitioning for federated learning."""
+"""Sequence-classification dataset loading with Dirichlet non-IID partitioning."""
 
 import warnings
 
 from transformers import AutoTokenizer, DataCollatorWithPadding
 
 from bert.experiment_config import build_fds_cache_key
+from bert.task_registry import get_legacy_task_config, get_num_labels, get_task_spec
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -13,48 +14,44 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 _fds_cache = {}
 
 
-# GLUE task configurations
-GLUE_TASK_CONFIG = {
-    "sst2": {
-        "dataset": "stanfordnlp/sst2",
-        "text_fields": ["sentence"],
-        "label_field": "label",
-        "num_labels": 2,
-    },
-    "qnli": {
-        "dataset": "nyu-mll/glue",
-        "subset": "qnli",
-        "text_fields": ["question", "sentence"],
-        "label_field": "label",
-        "num_labels": 2,
-    },
-    "mnli": {
-        "dataset": "nyu-mll/glue",
-        "subset": "mnli",
-        "text_fields": ["premise", "hypothesis"],
-        "label_field": "label",
-        "num_labels": 3,
-    },
-    "qqp": {
-        "dataset": "nyu-mll/glue",
-        "subset": "qqp",
-        "text_fields": ["question1", "question2"],
-        "label_field": "label",
-        "num_labels": 2,
-    },
-    "rte": {
-        "dataset": "nyu-mll/glue",
-        "subset": "rte",
-        "text_fields": ["sentence1", "sentence2"],
-        "label_field": "label",
-        "num_labels": 2,
-    },
-}
+# Legacy name kept for existing diagnostics and scripts.
+GLUE_TASK_CONFIG = get_legacy_task_config()
 
 
-def get_num_labels(task_name: str) -> int:
-    """Return number of labels for a GLUE task."""
-    return GLUE_TASK_CONFIG[task_name]["num_labels"]
+def _ensure_class_label(dataset, label_col: str, num_labels: int):
+    """Cast integer label features to ClassLabel without remapping label IDs."""
+    from datasets import ClassLabel
+
+    if isinstance(dataset.features[label_col], ClassLabel):
+        return dataset
+    return dataset.cast_column(label_col, ClassLabel(num_classes=num_labels))
+
+
+def _load_partition_with_context(
+    fds,
+    partition_id: int,
+    task_name: str,
+    num_partitions: int,
+    dirichlet_alpha: float,
+    min_partition_size: int,
+    partition_failure_hint: str | None = None,
+):
+    """Load a federated partition and add task config context to retry-limit errors."""
+    try:
+        return fds.load_partition(partition_id)
+    except ValueError as exc:
+        if "max number of attempts" not in str(exc):
+            raise
+
+        hint = "Lower min-partition-size or increase dirichlet-alpha/num-clients."
+        if partition_failure_hint:
+            hint = f"{hint} {partition_failure_hint}"
+        raise ValueError(
+            f"Dirichlet partitioning failed for task-name={task_name!r}, "
+            f"partition_id={partition_id}, num_partitions={num_partitions}, "
+            f"dirichlet_alpha={dirichlet_alpha}, "
+            f"min_partition_size={min_partition_size}. {hint}"
+        ) from exc
 
 
 def load_data(
@@ -68,12 +65,12 @@ def load_data(
     test_size: float = 0.2,
     seed: int = 42,
 ):
-    """Load a partition of GLUE data for federated learning.
+    """Load a partition of sequence-classification data for federated learning.
 
     Args:
         partition_id: Client partition index.
         num_partitions: Total number of partitions.
-        task_name: GLUE task name (sst2, qnli, mnli, qqp, rte).
+        task_name: Task name (for example sst2, qnli, 20newsgroups).
         model_name: HuggingFace model name for tokenizer.
         dirichlet_alpha: Dirichlet distribution alpha for non-IID split.
         min_partition_size: Minimum number of examples per partition.
@@ -86,7 +83,7 @@ def load_data(
     from flwr_datasets import FederatedDataset
     from flwr_datasets.partitioner import DirichletPartitioner
 
-    task_cfg = GLUE_TASK_CONFIG[task_name]
+    task_spec = get_task_spec(task_name)
     cache_key = build_fds_cache_key(
         task_name, num_partitions, dirichlet_alpha, seed, min_partition_size
     )
@@ -95,36 +92,42 @@ def load_data(
     if cache_key not in _fds_cache:
         partitioner = DirichletPartitioner(
             num_partitions=num_partitions,
-            partition_by=task_cfg["label_field"],
+            partition_by=task_spec.label_field,
             alpha=dirichlet_alpha,
             min_partition_size=min_partition_size,
             seed=seed,
         )
 
-        dataset_name = task_cfg["dataset"]
-        subset = task_cfg.get("subset")
-
-        if subset:
+        if task_spec.subset:
             _fds_cache[cache_key] = FederatedDataset(
-                dataset=dataset_name,
-                subset=subset,
-                partitioners={"train": partitioner},
+                dataset=task_spec.dataset,
+                subset=task_spec.subset,
+                partitioners={task_spec.train_split: partitioner},
             )
         else:
             _fds_cache[cache_key] = FederatedDataset(
-                dataset=dataset_name,
-                partitioners={"train": partitioner},
+                dataset=task_spec.dataset,
+                partitioners={task_spec.train_split: partitioner},
             )
 
     fds = _fds_cache[cache_key]
-    partition = fds.load_partition(partition_id)
+    partition = _load_partition_with_context(
+        fds,
+        partition_id=partition_id,
+        task_name=task_name,
+        num_partitions=num_partitions,
+        dirichlet_alpha=dirichlet_alpha,
+        min_partition_size=min_partition_size,
+        partition_failure_hint=task_spec.partition_failure_hint,
+    )
+    partition = _ensure_class_label(partition, task_spec.label_field, task_spec.num_labels)
 
     # Stratified train/test split (preserve label distribution)
     # Handle rare labels (count < 2): put them in train only, stratify the rest
     from collections import Counter
     from datasets import concatenate_datasets
 
-    label_col = task_cfg["label_field"]
+    label_col = task_spec.label_field
     label_counts = Counter(partition[label_col])
     rare_labels = {lab for lab, cnt in label_counts.items() if cnt < 2}
 
@@ -149,7 +152,7 @@ def load_data(
 
     # Tokenize
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    text_fields = task_cfg["text_fields"]
+    text_fields = task_spec.text_fields
 
     def tokenize_fn(examples):
         if len(text_fields) == 1:
@@ -169,13 +172,14 @@ def load_data(
     partition_split = partition_split.map(tokenize_fn, batched=True)
 
     # Remove text columns, keep only tokenized + label
+    columns_to_keep = {"input_ids", "attention_mask", "token_type_ids", label_col, "labels"}
     columns_to_remove = [c for c in partition_split["train"].column_names
-                         if c not in ("input_ids", "attention_mask", "token_type_ids", "label", "labels")]
+                         if c not in columns_to_keep]
     partition_split = partition_split.remove_columns(columns_to_remove)
 
     # Rename label to labels if needed
-    if "label" in partition_split["train"].column_names:
-        partition_split = partition_split.rename_column("label", "labels")
+    if label_col in partition_split["train"].column_names and label_col != "labels":
+        partition_split = partition_split.rename_column(label_col, "labels")
 
     partition_split.set_format("torch")
 
@@ -189,21 +193,20 @@ def load_centralized_data(
     model_name: str,
     max_seq_length: int = 128,
 ):
-    """Load full GLUE dataset for centralized training/evaluation.
+    """Load full sequence-classification dataset for centralized training/evaluation.
 
     Returns:
         (train_dataset, eval_dataset, tokenizer, data_collator): HF Datasets + tokenizer + collator.
     """
     from datasets import load_dataset
 
-    task_cfg = GLUE_TASK_CONFIG[task_name]
-    text_fields = task_cfg["text_fields"]
+    task_spec = get_task_spec(task_name)
+    text_fields = task_spec.text_fields
 
-    subset = task_cfg.get("subset")
-    if subset:
-        dataset = load_dataset(task_cfg["dataset"], subset)
+    if task_spec.subset:
+        dataset = load_dataset(task_spec.dataset, task_spec.subset)
     else:
-        dataset = load_dataset(task_cfg["dataset"])
+        dataset = load_dataset(task_spec.dataset)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -224,19 +227,21 @@ def load_centralized_data(
 
     dataset = dataset.map(tokenize_fn, batched=True)
 
-    columns_to_remove = [c for c in dataset["train"].column_names
-                         if c not in ("input_ids", "attention_mask", "token_type_ids", "label", "labels")]
+    train_split = task_spec.train_split
+    eval_split = task_spec.eval_split
+    label_col = task_spec.label_field
+
+    columns_to_keep = {"input_ids", "attention_mask", "token_type_ids", label_col, "labels"}
+    columns_to_remove = [c for c in dataset[train_split].column_names
+                         if c not in columns_to_keep]
     dataset = dataset.remove_columns(columns_to_remove)
 
-    if "label" in dataset["train"].column_names:
-        dataset = dataset.rename_column("label", "labels")
+    if label_col in dataset[train_split].column_names and label_col != "labels":
+        dataset = dataset.rename_column(label_col, "labels")
 
     dataset.set_format("torch")
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-    # Use validation set for test
-    test_split = "validation_matched" if task_name == "mnli" else "validation"
-
-    return dataset["train"], dataset[test_split], tokenizer, data_collator
+    return dataset[train_split], dataset[eval_split], tokenizer, data_collator

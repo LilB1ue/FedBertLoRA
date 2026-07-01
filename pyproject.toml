@@ -42,10 +42,10 @@ lora-alpha = 16
 lora-target-modules = "query,key,value,dense"
 
 # Data
-task-name = "sst2"
+task-name = "sst2"  # "sst2" | "qnli" | "mnli" | "qqp" | "rte" | "20newsgroups"
 num-clients = 30  # must match [federations] num-supernodes
 dirichlet-alpha = 0.3
-min-partition-size = 256
+min-partition-size = 256  # for 20newsgroups with 30 clients at alpha=0.3, use 128
 
 # Training
 learning-rate = 0.001
@@ -84,12 +84,13 @@ warmup-max-rounds = 10                        # Hard cap on warm-up length
 freeze-stable-rounds = 3                      # Freeze when cluster stable for N rounds
 layer-score-feature = "cumulative_delta_b"    # Layer scoring feature: "cumulative_delta_b" | "current_b"
 
-# FedALC-Agglo-LWC parameters (fixed E-round FedSA warm-up → R_E cluster+freeze)
-warmup-rounds = 5                             # Phase 0 length (FedSA warm-up rounds before cluster+freeze)
+# FedALC-Agglo-LWC parameters (probing warm-up → one-shot cluster+freeze)
+warmup-rounds = 5                             # Max probing rounds before forced cluster+freeze
 agglo-k-min = 2                               # Agglomerative K sweep lower bound
 agglo-k-max = 10                              # Agglomerative K sweep upper bound
 agglo-linkage = "average"                     # "average" | "complete" | "single" (ward rejected — requires Euclidean)
 agglo-min-silhouette = 0.0                    # If best sweep sil < this → fallback to K=1
+layer-overlap-trigger = 7                     # Freeze when consecutive top-10 normed Metric-B layers overlap by at least this many
 
 # FedALC-Random parameters (control baseline for FedALC-AP)
 random-cluster-k = 3                          # Number of clusters K (typically set to AP's mean K)

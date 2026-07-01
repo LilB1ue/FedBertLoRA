@@ -1,4 +1,4 @@
-"""Centralized training script for RoBERTa + LoRA on GLUE tasks.
+"""Centralized training script for sequence classification with LoRA.
 
 Shares the same model/dataset utilities as the federated learning code.
 Usage:
@@ -14,7 +14,6 @@ import sys
 from datetime import datetime
 
 import numpy as np
-from evaluate import load as load_metric
 from transformers import EarlyStoppingCallback, Trainer, TrainerCallback, TrainingArguments
 
 # Add parent dir to path so we can import bert package
@@ -22,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bert.dataset import get_num_labels, load_centralized_data
 from bert.models import get_model, set_seed
+from bert.task_registry import get_task_names, load_metric_for_task
 
 
 class FileLoggingCallback(TrainerCallback):
@@ -44,8 +44,8 @@ class FileLoggingCallback(TrainerCallback):
 
 
 def get_compute_metrics(task_name):
-    """Return compute_metrics function with task-specific GLUE metric."""
-    metric = load_metric("glue", task_name)
+    """Return compute_metrics function with task-specific metric."""
+    metric = load_metric_for_task(task_name)
 
     def compute_metrics(eval_pred):
         logits, labels = eval_pred
@@ -56,9 +56,9 @@ def get_compute_metrics(task_name):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Centralized LoRA training on GLUE")
+    parser = argparse.ArgumentParser(description="Centralized LoRA sequence classification")
     parser.add_argument("--task", type=str, default="sst2",
-                        choices=["sst2", "qnli", "mnli", "qqp", "rte"])
+                        choices=list(get_task_names()))
     parser.add_argument("--model-name", type=str, default="roberta-large")
     parser.add_argument("--lora-r", type=int, default=8)
     parser.add_argument("--lora-alpha", type=int, default=16)

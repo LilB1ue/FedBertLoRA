@@ -76,15 +76,30 @@ def weighted_average(
     return aggregated
 
 
-def compute_layer_scores(client_b_list: List[List[np.ndarray]]) -> List[float]:
-    """Metric B per layer: (1 - mean pairwise cosine sim) × mean Frobenius norm.
+def compute_layer_scores(
+    client_b_list: List[List[np.ndarray]],
+    score_mode: str = "metric-b-raw",
+) -> List[float]:
+    """Metric B per layer with raw or dimension-normalized magnitude.
 
     Higher score = layer where clients disagree strongly *and* have nontrivial
     magnitude. Used by FedALC-AP-LWC, FedALC-AP-Multi, FedALC-Agglo-LWC for
     top-K layer selection.
 
+    ``metric-b-raw`` preserves the original criterion:
+    (1 - mean pairwise cosine sim) × mean Frobenius norm.
+
+    ``metric-b-normed`` divides the magnitude term by sqrt(numel) to avoid
+    selecting larger tensors purely because they have more parameters.
+
     For n=1 client (no pairs), returns 0.0 dissimilarity instead of NaN.
     """
+    if score_mode not in {"metric-b-raw", "metric-b-normed"}:
+        raise ValueError(
+            "score_mode must be 'metric-b-raw' or 'metric-b-normed', "
+            f"got {score_mode!r}"
+        )
+
     n_layers = len(client_b_list[0])
     scores: List[float] = []
     for l in range(n_layers):
@@ -96,5 +111,8 @@ def compute_layer_scores(client_b_list: List[List[np.ndarray]]) -> List[float]:
         else:
             dissim = float(1.0 - sim[mask].mean())
         avg_norm = float(np.mean([np.linalg.norm(c[l]) for c in client_b_list]))
+        if score_mode == "metric-b-normed":
+            numel = int(vecs.shape[1])
+            avg_norm = avg_norm / np.sqrt(numel) if numel > 0 else 0.0
         scores.append(dissim * avg_norm)
     return scores

@@ -5,7 +5,6 @@ import os
 from datetime import datetime
 
 import torch
-from evaluate import load as load_metric
 from flwr.common import Context, ndarrays_to_parameters
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig
 from torch.utils.data import DataLoader
@@ -15,11 +14,13 @@ from bert.experiment_config import (
     BestCheckpointTracker,
     build_run_dir,
     build_wandb_run_name,
+    get_selective_checkpoint_rounds,
     normalize_checkpoint_policy,
     should_save_global_checkpoint,
     validate_checkpoint_best_metric,
 )
 from bert.models import cosine_annealing, get_model, get_parameters, get_parameter_keys, set_parameters, set_seed
+from bert.task_registry import load_metric_for_task
 from bert.strategy import FedAvgStrategy
 from bert.fedsa_strategy import FedSALoRAStrategy
 from bert.fedalc_ap_strategy import FedALCAPStrategy
@@ -108,7 +109,7 @@ def get_metrics_aggregation_fn(log_path, phase, use_wandb=False, best_checkpoint
 
 def _eval_on_loader(net, testloader, device, task_name):
     """Evaluate model on a DataLoader, return (loss, metrics_dict)."""
-    metric = load_metric("glue", task_name)
+    metric = load_metric_for_task(task_name)
     total_loss = 0.0
     net.eval()
     with torch.no_grad():
@@ -353,13 +354,19 @@ def server_fn(context: Context):
             )
         else:  # "constant"
             lr = learning_rate
-        return {"current_round": server_round, "learning_rate": lr, "log_timestamp": log_timestamp}
+        return {
+            "current_round": server_round,
+            "learning_rate": lr,
+            "log_timestamp": log_timestamp,
+            "total_rounds": num_rounds,
+        }
 
     def evaluate_config(server_round: int):
         return {
             "current_round": server_round,
             "log_timestamp": log_timestamp,
             "checkpoint_save_policy": checkpoint_save_policy,
+            "total_rounds": num_rounds,
         }
 
     # Build evaluate function
@@ -381,6 +388,7 @@ def server_fn(context: Context):
             os.path.join(log_subdir, "best_checkpoints"),
             metric=checkpoint_best_metric,
             mode=checkpoint_best_mode,
+            protected_rounds=sorted(get_selective_checkpoint_rounds(num_rounds)),
         )
     eval_metrics_agg = get_metrics_aggregation_fn(
         eval_log_path,
@@ -459,6 +467,7 @@ def server_fn(context: Context):
             agglo_linkage=str(cfg.get("agglo-linkage", "average")),
             agglo_min_silhouette=float(cfg.get("agglo-min-silhouette", 0.0)),
             layer_selection_k=int(cfg.get("layer-selection-k", 10)),
+            layer_overlap_trigger=int(cfg.get("layer-overlap-trigger", 7)),
             **common_kwargs_no_eval,
         )
     else:

@@ -15,6 +15,7 @@ SUPPORTED_BEST_METRICS = {
     "mnli": {"accuracy"},
     "rte": {"accuracy"},
     "qqp": {"accuracy", "f1"},
+    "20newsgroups": {"accuracy"},
 }
 
 
@@ -102,21 +103,34 @@ def normalize_checkpoint_policy(policy: str) -> str:
     return normalized
 
 
-def should_save_client_checkpoint(policy: str, current_round: int) -> bool:
+def get_selective_checkpoint_rounds(total_rounds: int | None) -> set[int]:
+    """Return rounds protected by selective checkpoint retention."""
+    rounds = {1}
+    if total_rounds is not None and total_rounds > 0:
+        rounds.add(int(total_rounds))
+    return rounds
+
+
+def should_save_client_checkpoint(
+    policy: str,
+    current_round: int,
+    total_rounds: int | None = None,
+) -> bool:
     """Return whether to save post-training client checkpoint for this round."""
     policy = normalize_checkpoint_policy(policy)
-    return policy == "all" or current_round == 1
+    return policy == "all" or current_round in get_selective_checkpoint_rounds(total_rounds)
 
 
 def should_save_received_checkpoint(
     policy: str,
     aggregation_mode: str,
     current_round: int,
+    total_rounds: int | None = None,
 ) -> bool:
     """Return whether to save pre-training received checkpoint for this round."""
     if aggregation_mode == "fedavg":
         return False
-    return should_save_client_checkpoint(policy, current_round)
+    return should_save_client_checkpoint(policy, current_round, total_rounds)
 
 
 def should_save_global_checkpoint(policy: str, aggregation_mode: str) -> bool:
@@ -129,17 +143,29 @@ class BestCheckpointTracker:
     """Track and prune evaluation-aligned best checkpoint candidates.
 
     Candidate checkpoints are expected at ``root_dir/round_R/client_ID`` before
-    ``update`` is called. ``update`` keeps only the best round directory and a
+    ``update`` is called. ``update`` keeps the best round directory, any
+    protected round directories (for example first/final), and a
     ``best_round.json`` metadata file.
     """
 
-    def __init__(self, root_dir: str | Path, metric: str, mode: str = "max") -> None:
+    def __init__(
+        self,
+        root_dir: str | Path,
+        metric: str,
+        mode: str = "max",
+        protected_rounds: List[int] | None = None,
+    ) -> None:
         self.root_dir = Path(root_dir)
         self.metric = metric
         self.mode = mode.lower()
         if self.mode not in {"max", "min"}:
             raise ValueError(f"checkpoint-best-mode must be 'max' or 'min', got {mode!r}")
         self.best_metadata: Dict[str, float | int | str] | None = None
+        self.protected_rounds = {
+            int(round_id)
+            for round_id in (protected_rounds or [])
+            if int(round_id) > 0
+        }
 
     def update(
         self,
@@ -154,9 +180,9 @@ class BestCheckpointTracker:
             self.best_metadata = metadata
             self._write_metadata(metadata)
             if previous_round is not None and previous_round != server_round:
-                self._remove_round(previous_round)
+                self._remove_round_if_unprotected(previous_round)
         else:
-            self._remove_round(server_round)
+            self._remove_round_if_unprotected(server_round)
 
         return dict(self.best_metadata)
 
@@ -206,3 +232,8 @@ class BestCheckpointTracker:
         round_dir = self.root_dir / f"round_{server_round}"
         if round_dir.exists():
             shutil.rmtree(round_dir)
+
+    def _remove_round_if_unprotected(self, server_round: int) -> None:
+        if int(server_round) in self.protected_rounds:
+            return
+        self._remove_round(server_round)

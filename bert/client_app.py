@@ -1,10 +1,9 @@
-"""Flower ClientApp: Local LoRA training on GLUE tasks using HF Trainer."""
+"""Flower ClientApp: Local LoRA training using HF Trainer."""
 
 import os
 
 import numpy as np
 import torch
-from evaluate import load as load_metric
 from flwr.client import ClientApp, NumPyClient
 from flwr.common import Context
 from torch.utils.data import DataLoader
@@ -18,6 +17,7 @@ from bert.experiment_config import (
     should_save_received_checkpoint,
 )
 from bert.models import get_model, get_parameters, set_parameters, set_seed, freeze_lora_a
+from bert.task_registry import load_metric_for_task
 
 
 
@@ -60,11 +60,15 @@ class FlowerClient(NumPyClient):
 
         current_round = int(config.get("current_round", 0))
         log_timestamp = config.get("log_timestamp", "")
+        total_rounds = int(config.get("total_rounds", 0)) or None
 
         # Legacy full-retention path is preserved by checkpoint-save-policy="all".
         if (
             should_save_received_checkpoint(
-                self.checkpoint_save_policy, self.aggregation_mode, current_round
+                self.checkpoint_save_policy,
+                self.aggregation_mode,
+                current_round,
+                total_rounds,
             )
             and log_timestamp
         ):
@@ -137,7 +141,11 @@ class FlowerClient(NumPyClient):
             ckpt_dir = os.path.join(run_dir, "client_checkpoints")
         else:
             ckpt_dir = self.checkpoint_dir
-        if ckpt_dir and should_save_client_checkpoint(self.checkpoint_save_policy, current_round):
+        if ckpt_dir and should_save_client_checkpoint(
+            self.checkpoint_save_policy,
+            current_round,
+            total_rounds,
+        ):
             save_path = os.path.join(ckpt_dir, f"round_{current_round}", f"client_{self.partition_id}")
             os.makedirs(save_path, exist_ok=True)
             self.net.save_pretrained(save_path)
@@ -191,7 +199,7 @@ class FlowerClient(NumPyClient):
 
 def test(net, eval_dataset, data_collator, batch_size, device, task_name="sst2"):
     """Evaluate the model and return loss + task-specific metrics."""
-    metric = load_metric("glue", task_name)
+    metric = load_metric_for_task(task_name)
     testloader = DataLoader(eval_dataset, batch_size=batch_size, collate_fn=data_collator)
     total_loss = 0.0
     net.eval()
